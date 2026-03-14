@@ -788,12 +788,17 @@ function createMcpServer(): McpServer {
           const detail = getFlowDefinition(solDir, f.jsonFile);
           if (detail) {
             const desc = describeFlow(detail);
-            if (desc.trigger) sections.push(`Trigger: ${desc.trigger.type} — ${desc.trigger.kind || ""} ${JSON.stringify(desc.trigger.inputs || {}).substring(0, 500)}`);
-            if (desc.actions.length) {
-              sections.push(`Actions (${desc.actions.length}):`);
-              for (const a of desc.actions) sections.push(`  - ${a.name} [${a.type}]${a.connection ? ` via ${a.connection}` : ""}`);
+            if (!("error" in desc)) {
+              if (desc.triggers?.length) {
+                const t = desc.triggers[0];
+                sections.push(`Trigger: ${t.type}${t.operationId ? " — " + t.operationId : ""}${t.connector ? " via " + t.connector : ""}`);
+              }
+              if (desc.actions?.length) {
+                sections.push(`Actions (${desc.actions.length}):`);
+                for (const a of desc.actions) sections.push(`  - ${a.name} [${a.type}]${a.connector ? ` via ${a.connector}` : ""}`);
+              }
+              if (desc.connectionReferences?.length) sections.push(`Connection refs: ${desc.connectionReferences.map(r => r.name).join(", ")}`);
             }
-            if (desc.connectors.length) sections.push(`Connectors: ${desc.connectors.join(", ")}`);
           }
         }
       }
@@ -825,7 +830,7 @@ function createMcpServer(): McpServer {
       const connectors = parseConnectors(solDir);
       if (connectors.length) {
         sections.push(`\n## Connection References (${connectors.length})`);
-        for (const c of connectors) sections.push(`- ${c.name} → ${c.connector} (${c.id})`);
+        for (const c of connectors) sections.push(`- ${c.displayName || c.logicalName} → ${c.connector} (${c.connectorId})`);
       }
 
       // ── Entities ──

@@ -729,6 +729,88 @@ function createMcpServer(): McpServer {
       return { content: [{ type: "text", text: content.substring(0, 50000) }] };
     });
 
+  // ── MCP Resources ────────────────────────────────────────────────
+  // Resources provide context the agent can read without a tool call.
+  // Copilot Studio shows these in the "Resources" tab.
+
+  // Dynamic resource for each solution's overview
+  for (const solDir of listSolutionDirs()) {
+    const info = parseSolutionXml(solDir);
+    const displayName = info?.displayName || info?.uniqueName || solDir;
+
+    server.resource(
+      `solution-overview-${solDir}`,
+      `solution://${solDir}/overview`,
+      {
+        description: `Complete overview of the "${displayName}" Power Platform solution — components, flows, agents, connectors, and more`,
+        mimeType: "text/markdown",
+      },
+      async () => ({
+        contents: [{ uri: `solution://${solDir}/overview`, mimeType: "text/markdown", text: summarizeSolution(solDir) }],
+      })
+    );
+
+    server.resource(
+      `solution-manifest-${solDir}`,
+      `solution://${solDir}/manifest`,
+      {
+        description: `Raw solution.xml manifest for "${displayName}" — metadata, publisher, root components`,
+        mimeType: "application/xml",
+      },
+      async () => ({
+        contents: [{ uri: `solution://${solDir}/manifest`, mimeType: "application/xml", text: readSolFile(solDir, "solution.xml") || "" }],
+      })
+    );
+
+    // Agent system prompt as a resource (if present)
+    const gptComp = parseBotComponents(solDir).find((c) => c.type === "gpt");
+    if (gptComp) {
+      server.resource(
+        `agent-prompt-${solDir}`,
+        `solution://${solDir}/agent-prompt`,
+        {
+          description: `System prompt / instructions for the Copilot Studio agent in "${displayName}"`,
+          mimeType: "text/yaml",
+        },
+        async () => ({
+          contents: [{ uri: `solution://${solDir}/agent-prompt`, mimeType: "text/yaml", text: getBotComponentData(solDir, gptComp.folder) || "" }],
+        })
+      );
+    }
+
+    // Flow definitions as resources
+    const flows = parseFlows(solDir);
+    for (const flow of flows) {
+      server.resource(
+        `flow-${solDir}-${flow.id}`,
+        `solution://${solDir}/flow/${encodeURIComponent(flow.name)}`,
+        {
+          description: `Power Automate flow definition: "${flow.name}" [${flow.categoryName}] — ${flow.description || "no description"}`,
+          mimeType: "application/json",
+        },
+        async () => {
+          const def = getFlowDefinition(solDir, flow.jsonFile);
+          return {
+            contents: [{ uri: `solution://${solDir}/flow/${encodeURIComponent(flow.name)}`, mimeType: "application/json", text: JSON.stringify(def, null, 2) }],
+          };
+        }
+      );
+    }
+
+    // Connectors summary as a resource
+    server.resource(
+      `connectors-${solDir}`,
+      `solution://${solDir}/connectors`,
+      {
+        description: `All connection references and connectors used by "${displayName}"`,
+        mimeType: "application/json",
+      },
+      async () => ({
+        contents: [{ uri: `solution://${solDir}/connectors`, mimeType: "application/json", text: JSON.stringify(parseConnectors(solDir), null, 2) }],
+      })
+    );
+  }
+
   return server;
 }
 

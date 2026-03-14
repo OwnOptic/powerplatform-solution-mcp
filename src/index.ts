@@ -36,6 +36,7 @@ const COMPONENT_TYPES: Record<number, string> = {
   64: "Complex Control", 65: "Hierarchy Rule",
   66: "Custom Control (PCF)", 68: "Custom Control Default Config",
   70: "Field Security Profile", 71: "Field Permission",
+  80: "App Module (Model-Driven App)",
   90: "Plugin Type", 91: "Plugin Assembly",
   92: "SDK Message Processing Step", 93: "SDK Message Processing Step Image",
   95: "Service Endpoint", 150: "Routing Rule", 151: "Routing Rule Item",

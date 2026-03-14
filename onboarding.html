@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Onboarding Guide: Power Platform Solution Explorer MCP</title>
+<style>
+  :root {
+    --orange: #F26F21;
+    --navy: #2A3B4E;
+    --bg: #f9fafb;
+    --surface: #ffffff;
+    --text: #111827;
+    --text2: #4b5563;
+    --border: #e5e7eb;
+    --green: #059669;
+    --blue: #2563eb;
+    --red: #dc2626;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+
+  .header { background: linear-gradient(135deg, var(--navy) 0%, #1a2a3a 100%); color: white; padding: 2rem 2rem 1.5rem; }
+  .header-inner { max-width: 900px; margin: 0 auto; }
+  .header h1 { font-size: 1.4rem; font-weight: 700; margin-bottom: 0.15rem; }
+  .header .subtitle { color: #94a3b8; font-size: 0.85rem; }
+  .header .tagline { color: #cbd5e1; font-size: 0.9rem; margin-top: 0.75rem; line-height: 1.5; }
+
+  .container { max-width: 900px; margin: 0 auto; padding: 1.5rem; }
+
+  .tabs { display: flex; gap: 0; border-bottom: 2px solid var(--border); margin-bottom: 1.5rem; overflow-x: auto; }
+  .tab { padding: 0.6rem 1.2rem; cursor: pointer; font-size: 0.82rem; font-weight: 500; color: var(--text2); border-bottom: 2px solid transparent; margin-bottom: -2px; white-space: nowrap; transition: all 0.2s; }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--orange); border-bottom-color: var(--orange); }
+
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem; margin-bottom: 1rem; }
+  .card h3 { font-size: 0.95rem; font-weight: 600; margin-bottom: 0.75rem; color: var(--navy); }
+
+  .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 9999px; font-size: 0.7rem; font-weight: 600; }
+  .badge-orange { background: #fff7ed; color: #c2410c; }
+  .badge-green { background: #ecfdf5; color: #047857; }
+  .badge-blue { background: #eff6ff; color: #1d4ed8; }
+  .badge-navy { background: #f0f4f8; color: var(--navy); }
+
+  .progress-bar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; margin: 0.75rem 0; }
+  .progress-fill { height: 100%; background: linear-gradient(90deg, var(--orange), #e11d48); border-radius: 3px; transition: width 0.4s ease; }
+
+  .step { border-bottom: 1px solid #f1f5f9; padding: 0.75rem 0; }
+  .step:last-child { border-bottom: none; }
+  .step-header { display: flex; align-items: flex-start; gap: 0.75rem; cursor: pointer; }
+  .step-num { width: 28px; height: 28px; background: var(--border); color: var(--text2); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.75rem; font-weight: 700; flex-shrink: 0; transition: all 0.3s; }
+  .step.done .step-num { background: var(--green); color: white; }
+  .step-content { flex: 1; }
+  .step-title { font-size: 0.88rem; font-weight: 600; color: var(--text); }
+  .step-desc { font-size: 0.8rem; color: var(--text2); margin-top: 0.15rem; }
+  .step-detail { display: none; margin-top: 0.6rem; padding: 0.75rem; background: #f8fafc; border-radius: 6px; font-size: 0.8rem; }
+  .step.open .step-detail { display: block; }
+  .step-check { width: 20px; height: 20px; accent-color: var(--orange); cursor: pointer; flex-shrink: 0; margin-top: 0.2rem; }
+
+  code { background: #f1f5f9; padding: 0.15rem 0.4rem; border-radius: 3px; font-size: 0.8rem; font-family: 'Fira Code', 'Cascadia Code', monospace; color: var(--navy); }
+  pre { background: var(--navy); color: #e2e8f0; padding: 0.75rem 1rem; border-radius: 6px; font-size: 0.78rem; overflow-x: auto; margin: 0.5rem 0; font-family: 'Fira Code', 'Cascadia Code', monospace; line-height: 1.5; position: relative; cursor: pointer; }
+  pre::after { content: 'click to copy'; position: absolute; right: 0.5rem; top: 0.4rem; font-size: 0.6rem; color: #64748b; }
+  pre.copied::after { content: 'copied!'; color: var(--green); }
+
+  .tool-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 0.6rem; }
+  .tool-item { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 0.6rem 0.75rem; }
+  .tool-name { font-family: monospace; font-size: 0.78rem; font-weight: 600; color: var(--navy); }
+  .tool-desc { font-size: 0.72rem; color: var(--text2); margin-top: 0.15rem; }
+
+  .faq-item { border-bottom: 1px solid #f1f5f9; padding: 0.6rem 0; cursor: pointer; }
+  .faq-item:last-child { border-bottom: none; }
+  .faq-q { font-size: 0.85rem; font-weight: 600; color: var(--navy); display: flex; justify-content: space-between; align-items: center; }
+  .faq-q::after { content: '+'; font-size: 1rem; color: var(--orange); transition: transform 0.2s; }
+  .faq-item.open .faq-q::after { content: '-'; }
+  .faq-a { display: none; font-size: 0.8rem; color: var(--text2); margin-top: 0.4rem; line-height: 1.6; }
+  .faq-item.open .faq-a { display: block; }
+
+  .link-card { display: flex; align-items: center; gap: 0.75rem; padding: 0.6rem 0; border-bottom: 1px solid #f1f5f9; }
+  .link-card:last-child { border-bottom: none; }
+  .link-icon { width: 32px; height: 32px; background: #f1f5f9; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 0.9rem; flex-shrink: 0; }
+  .link-text a { font-size: 0.82rem; color: var(--blue); text-decoration: none; font-weight: 500; }
+  .link-text a:hover { color: var(--orange); }
+  .link-text p { font-size: 0.72rem; color: var(--text2); margin-top: 0.1rem; }
+
+  .arch { background: var(--navy); color: #e2e8f0; padding: 1rem; border-radius: 8px; font-family: monospace; font-size: 0.75rem; line-height: 1.6; white-space: pre; overflow-x: auto; margin: 0.75rem 0; }
+
+  @media (max-width: 768px) {
+    .tool-grid { grid-template-columns: 1fr; }
+    .header { padding: 1.5rem 1rem 1rem; }
+    .container { padding: 1rem; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-inner">
+    <h1>Power Platform Solution Explorer MCP</h1>
+    <div class="subtitle">Interactive Onboarding Guide</div>
+    <div class="tagline">Export a Power Platform solution. Drop the ZIP. Let any AI agent answer questions about it.</div>
+  </div>
+</div>
+
+<div class="container">
+  <div class="tabs">
+    <div class="tab active" data-tab="setup">Setup Checklist</div>
+    <div class="tab" data-tab="copilot">Copilot Studio</div>
+    <div class="tab" data-tab="tools">24 Tools</div>
+    <div class="tab" data-tab="arch">Architecture</div>
+    <div class="tab" data-tab="faq">Troubleshooting</div>
+    <div class="tab" data-tab="docs">Documentation</div>
+  </div>
+
+  <!-- SETUP CHECKLIST -->
+  <div class="panel active" id="setup">
+    <div class="card">
+      <h3>Get Running in 5 Minutes <span class="badge badge-orange" id="setup-badge">0 / 6</span></h3>
+      <div class="progress-bar"><div class="progress-fill" id="setup-progress" style="width: 0%"></div></div>
+
+      <div class="step" id="step-1">
+        <div class="step-header" onclick="toggleStep('step-1')">
+          <input type="checkbox" class="step-check" onclick="event.stopPropagation(); updateProgress()" />
+          <div class="step-num">1</div>
+          <div class="step-content">
+            <div class="step-title">Install Node.js 18+</div>
+            <div class="step-desc">Runtime for the MCP server. Check with <code>node --version</code></div>
+          </div>
+        </div>
+        <div class="step-detail">
+          <p>Download from <a href="https://nodejs.org" target="_blank">nodejs.org</a>. Pick the LTS version. Install and restart your terminal.</p>
+          <p style="margin-top: 0.4rem;">Verify:</p>
+          <pre onclick="copyPre(this)">node --version
+npm --version</pre>
+          <p style="margin-top: 0.3rem;">Both should return version numbers. Node must be 18 or higher.</p>
+        </div>
+      </div>
+
+      <div class="step" id="step-2">
+        <div class="step-header" onclick="toggleStep('step-2')">
+          <input type="checkbox" class="step-check" onclick="event.stopPropagation(); updateProgress()" />
+          <div class="step-num">2</div>
+          <div class="step-content">
+            <div class="step-title">Clone the repository</div>
+            <div class="step-desc">Get the source code from GitHub</div>
+          </div>
+        </div>
+        <div class="step-detail">
+          <pre onclick="copyPre(this)">git clone https://github.com/OwnOptic/powerplatform-solution-mcp.git
+cd powerplatform-solution-mcp</pre>
+        </div>
+      </div>
+
+      <div class="step" id="step-3">
+        <div class="step-header" onclick="toggleStep('step-3')">
+          <input type="checkbox" class="step-check" onclick="event.stopPropagation(); updateProgress()" />
+          <div class="step-num">3</div>
+          <div class="step-content">
+            <div class="step-title">Install dependencies</div>
+            <div class="step-desc">Just 2 packages: MCP SDK + Zod</div>
+          </div>
+        </div>
+        <div class="step-detail">
+          <pre onclick="copyPre(this)">npm install</pre>
+          <p style="margin-top: 0.3rem;">This installs exactly 2 runtime dependencies. Nothing else.</p>
+        </div>
+      </div>
+
+      <div class="step" id="step-4">
+        <div class="step-header" onclick="toggleStep('step-4')">
+          <input type="checkbox" class="step-check" onclick="event.stopPropagation(); updateProgress()" />
+          <div class="step-num">4</div>
+          <div class="step-content">
+            <div class="step-title">Drop your solution ZIP</div>
+            <div class="step-desc">Export from make.powerapps.com and copy into <code>solutions/</code></div>
+          </div>
+        </div>
+        <div class="step-detail">
+          <p><strong>How to export:</strong></p>
+          <ol style="padding-left: 1.2rem; margin: 0.3rem 0; font-size: 0.8rem;">
+            <li>Go to <a href="https://make.powerapps.com" target="_blank">make.powerapps.com</a></li>
+            <li>Select your Environment (top-right)</li>
+            <li>Click <strong>Solutions</strong> in the sidebar</li>
+            <li>Select your solution, click <strong>Export</strong></li>
+            <li>Choose <strong>Unmanaged</strong> (recommended for full source)</li>
+            <li>Download the .zip file</li>
+          </ol>
+          <p style="margin-top: 0.4rem;"><strong>Then drop it in:</strong></p>
+          <pre onclick="copyPre(this)"># Windows (drag and drop into solutions/ folder)
+# Or via terminal:
+copy C:\Users\you\Downloads\MySolution.zip .\solutions\</pre>
+          <p style="margin-top: 0.3rem;">You can drop multiple ZIPs. Each becomes a separate explorable solution.</p>
+        </div>
+      </div>
+
+      <div class="step" id="step-5">
+        <div class="step-header" onclick="toggleStep('step-5')">
+          <input type="checkbox" class="step-check" onclick="event.stopPropagation(); updateProgress()" />
+          <div class="step-num">5</div>
+          <div class="step-content">
+            <div class="step-title">Start the server</div>
+            <div class="step-desc">Auto-extracts ZIPs, registers 24 tools, starts listening</div>
+          </div>
+        </div>
+        <div class="step-detail">
+          <pre onclick="copyPre(this)">npm run dev</pre>
+          <p style="margin-top: 0.3rem;">Expected output:</p>
+          <pre style="cursor: default; font-size: 0.72rem;">Power Platform Solution Explorer MCP Server
+──────────────────────────────────────────
+ZIP drop folder: ./solutions
+Extracted to:    ./extracted
+✓ Extracted: MySolution.zip → MySolution
+MCP endpoint:    http://localhost:3001/mcp
+Health check:    http://localhost:3001/health
+Tools:           24
+Solutions:       MySolution</pre>
+        </div>
+      </div>
+
+      <div class="step" id="step-6">
+        <div class="step-header" onclick="toggleStep('step-6')">
+          <input type="checkbox" class="step-check" onclick="event.stopPropagation(); updateProgress()" />
+          <div class="step-num">6</div>
+          <div class="step-content">
+            <div class="step-title">Verify with health check</div>
+            <div class="step-desc">Confirm the server is running and tools are registered</div>
+          </div>
+        </div>
+        <div class="step-detail">
+          <p>Open in browser or run:</p>
+          <pre onclick="copyPre(this)">curl http://localhost:3001/health</pre>
+          <p style="margin-top: 0.3rem;">Expected response:</p>
+          <pre style="cursor: default;">{"status":"ok","server":"Power Platform Solution Explorer MCP","version":"2.0.0","tools":24,"solutions":["MySolution"]}</pre>
+          <p style="margin-top: 0.5rem; font-weight: 600; color: var(--green);">You're ready. Connect any MCP client to <code>http://localhost:3001/mcp</code></p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- COPILOT STUDIO -->
+  <div class="panel" id="copilot">
+    <div class="card">
+      <h3>Connect to Copilot Studio <span class="badge badge-blue">4 steps</span></h3>
+
+      <div class="step" id="cs-1">
+        <div class="step-header" onclick="toggleStep('cs-1')">
+          <input type="checkbox" class="step-check" onclick="event.stopPropagation(); updateProgress()" />
+          <div class="step-num">1</div>
+          <div class="step-content">
+            <div class="step-title">Start a dev tunnel</div>
+            <div class="step-desc">Copilot Studio needs a public URL to reach your local server</div>
+          </div>
+        </div>
+        <div class="step-detail">
+          <p><strong>Install (one-time):</strong></p>
+          <pre onclick="copyPre(this)"># Windows
+winget install Microsoft.devtunnel
+
+# Mac
+brew install --cask devtunnel
+
+# Linux
+curl -sL https://aka.ms/DevTunnelCliInstall | bash</pre>
+          <p style="margin-top: 0.4rem;"><strong>Login (one-time):</strong></p>
+          <pre onclick="copyPre(this)">devtunnel user login -g</pre>
+          <p style="margin-top: 0.4rem;"><strong>Start tunnel:</strong></p>
+          <pre onclick="copyPre(this)">devtunnel host -p 3001 --allow-anonymous</pre>
+          <p style="margin-top: 0.3rem;">Copy the URL. Your MCP endpoint: <code>https://&lt;tunnel-id&gt;-3001.euw.devtunnels.ms/mcp</code></p>
+        </div>
+      </div>
+
+      <div class="step" id="cs-2">
+        <div class="step-header" onclick="toggleStep('cs-2')">
+          <input type="checkbox" class="step-check" onclick="event.stopPropagation(); updateProgress()" />
+          <div class="step-num">2</div>
+          <div class="step-content">
+            <div class="step-title">Register MCP tool in Copilot Studio</div>
+            <div class="step-desc">Add the MCP server as a tool source</div>
+          </div>
+        </div>
+        <div class="step-detail">
+          <ol style="padding-left: 1.2rem; font-size: 0.8rem;">
+            <li>Go to <a href="https://copilotstudio.microsoft.com" target="_blank">copilotstudio.microsoft.com</a></li>
+            <li>Open your agent (or create a new one)</li>
+            <li>Click <strong>Tools</strong> in the left sidebar</li>
+            <li>Click <strong>Add a tool</strong> then <strong>Model Context Protocol</strong></li>
+            <li>Fill in:
+              <ul style="margin: 0.3rem 0;">
+                <li><strong>Server name:</strong> Power Platform Solution Explorer</li>
+                <li><strong>Server URL:</strong> your tunnel URL + <code>/mcp</code></li>
+                <li><strong>Authentication:</strong> None (for local dev)</li>
+              </ul>
+            </li>
+            <li>Click <strong>Next</strong>. Copilot Studio connects and discovers all 24 tools.</li>
+            <li>Enable all tools, click <strong>Add</strong></li>
+          </ol>
+        </div>
+      </div>
+
+      <div class="step" id="cs-3">
+        <div class="step-header" onclick="toggleStep('cs-3')">
+          <input type="checkbox" class="step-check" onclick="event.stopPropagation(); updateProgress()" />
+          <div class="step-num">3</div>
+          <div class="step-content">
+            <div class="step-title">Enable Generative Orchestration</div>
+            <div class="step-desc">Let the agent automatically pick the right tool per question</div>
+          </div>
+        </div>
+        <div class="step-detail">
+          <ol style="padding-left: 1.2rem; font-size: 0.8rem;">
+            <li>Go to your agent's <strong>Settings</strong></li>
+            <li>Click <strong>Generative AI</strong></li>
+            <li>Enable <strong>Generative orchestration</strong></li>
+            <li>Save</li>
+          </ol>
+        </div>
+      </div>
+
+      <div class="step" id="cs-4">
+        <div class="step-header" onclick="toggleStep('cs-4')">
+          <input type="checkbox" class="step-check" onclick="event.stopPropagation(); updateProgress()" />
+          <div class="step-num">4</div>
+          <div class="step-content">
+            <div class="step-title">Test in the chat pane</div>
+            <div class="step-desc">Ask questions and watch the agent pick tools automatically</div>
+          </div>
+        </div>
+        <div class="step-detail">
+          <p>Try these questions:</p>
+          <table style="width: 100%; border-collapse: collapse; font-size: 0.78rem; margin-top: 0.4rem;">
+            <thead>
+              <tr><th style="text-align: left; padding: 0.4rem; background: #f1f5f9; border-bottom: 1px solid var(--border);">Ask this</th><th style="text-align: left; padding: 0.4rem; background: #f1f5f9; border-bottom: 1px solid var(--border);">Tool used</th></tr>
+            </thead>
+            <tbody>
+              <tr><td style="padding: 0.35rem 0.4rem; border-bottom: 1px solid #f1f5f9;">"What solutions are available?"</td><td style="padding: 0.35rem 0.4rem; border-bottom: 1px solid #f1f5f9;"><code>list_solutions</code></td></tr>
+              <tr><td style="padding: 0.35rem 0.4rem; border-bottom: 1px solid #f1f5f9;">"Describe this solution"</td><td style="padding: 0.35rem 0.4rem; border-bottom: 1px solid #f1f5f9;"><code>describe_solution</code></td></tr>
+              <tr><td style="padding: 0.35rem 0.4rem; border-bottom: 1px solid #f1f5f9;">"What flows are in the solution?"</td><td style="padding: 0.35rem 0.4rem; border-bottom: 1px solid #f1f5f9;"><code>list_flows</code></td></tr>
+              <tr><td style="padding: 0.35rem 0.4rem; border-bottom: 1px solid #f1f5f9;">"Show me the agent's system prompt"</td><td style="padding: 0.35rem 0.4rem; border-bottom: 1px solid #f1f5f9;"><code>get_agent_system_prompt</code></td></tr>
+              <tr><td style="padding: 0.35rem 0.4rem; border-bottom: 1px solid #f1f5f9;">"What connectors does it use?"</td><td style="padding: 0.35rem 0.4rem; border-bottom: 1px solid #f1f5f9;"><code>list_connectors</code></td></tr>
+              <tr><td style="padding: 0.35rem 0.4rem;">"Search for anything about email"</td><td style="padding: 0.35rem 0.4rem;"><code>search_solution</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 24 TOOLS -->
+  <div class="panel" id="tools">
+    <div class="card">
+      <h3>Solution Overview <span class="badge badge-navy">4 tools</span></h3>
+      <div class="tool-grid">
+        <div class="tool-item"><div class="tool-name">list_solutions</div><div class="tool-desc">List all extracted solutions available</div></div>
+        <div class="tool-item"><div class="tool-name">get_solution_info</div><div class="tool-desc">Metadata: name, version, publisher, root components (70+ types)</div></div>
+        <div class="tool-item"><div class="tool-name">describe_solution</div><div class="tool-desc">Natural-language summary of the entire solution</div></div>
+        <div class="tool-item"><div class="tool-name">get_solution_structure</div><div class="tool-desc">Folder tree: what component types are present</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Power Automate Flows <span class="badge badge-navy">2 tools</span></h3>
+      <div class="tool-grid">
+        <div class="tool-item"><div class="tool-name">list_flows</div><div class="tool-desc">All flows with category, status, trigger type</div></div>
+        <div class="tool-item"><div class="tool-name">get_flow_details</div><div class="tool-desc">Deep dive: triggers, actions, connection references</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Copilot Studio / Agents <span class="badge badge-navy">5 tools</span></h3>
+      <div class="tool-grid">
+        <div class="tool-item"><div class="tool-name">list_bot_topics</div><div class="tool-desc">Conversation topics: Greeting, Fallback, custom</div></div>
+        <div class="tool-item"><div class="tool-name">list_bot_actions</div><div class="tool-desc">Actions with connector mappings</div></div>
+        <div class="tool-item"><div class="tool-name">get_agent_system_prompt</div><div class="tool-desc">Full persona/instructions (GPT component)</div></div>
+        <div class="tool-item"><div class="tool-name">get_component_data</div><div class="tool-desc">Raw YAML/JSON for any bot component</div></div>
+        <div class="tool-item"><div class="tool-name">list_external_triggers</div><div class="tool-desc">Power Automate triggers that invoke the agent</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Dataverse & Model-Driven Apps <span class="badge badge-navy">5 tools</span></h3>
+      <div class="tool-grid">
+        <div class="tool-item"><div class="tool-name">list_entities</div><div class="tool-desc">Tables with form/view/chart counts</div></div>
+        <div class="tool-item"><div class="tool-name">list_security_roles</div><div class="tool-desc">Security roles with privilege counts</div></div>
+        <div class="tool-item"><div class="tool-name">list_option_sets</div><div class="tool-desc">Global choices with option values</div></div>
+        <div class="tool-item"><div class="tool-name">list_app_modules</div><div class="tool-desc">Model-driven app definitions</div></div>
+        <div class="tool-item"><div class="tool-name">get_sitemap</div><div class="tool-desc">Navigation: areas, groups, sub-areas</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Canvas Apps & Web Resources <span class="badge badge-navy">2 tools</span></h3>
+      <div class="tool-grid">
+        <div class="tool-item"><div class="tool-name">list_canvas_apps</div><div class="tool-desc">Canvas Apps (.msapp files)</div></div>
+        <div class="tool-item"><div class="tool-name">list_web_resources</div><div class="tool-desc">HTML, JS, CSS, images, SVGs with types/sizes</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Connectors & Configuration <span class="badge badge-navy">3 tools</span></h3>
+      <div class="tool-grid">
+        <div class="tool-item"><div class="tool-name">list_connectors</div><div class="tool-desc">Connection references: Office 365, Planner, custom</div></div>
+        <div class="tool-item"><div class="tool-name">list_custom_connectors</div><div class="tool-desc">Custom connectors with OpenAPI definitions</div></div>
+        <div class="tool-item"><div class="tool-name">list_environment_variables</div><div class="tool-desc">String, Number, Boolean, JSON, Secret, Data Source</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Plugins, Search & Raw Access <span class="badge badge-navy">3 tools</span></h3>
+      <div class="tool-grid">
+        <div class="tool-item"><div class="tool-name">list_plugin_assemblies</div><div class="tool-desc">Plugin DLLs included in the solution</div></div>
+        <div class="tool-item"><div class="tool-name">search_solution</div><div class="tool-desc">Full-text search across all files (XML, JSON, YAML)</div></div>
+        <div class="tool-item"><div class="tool-name">get_raw_file</div><div class="tool-desc">Read any file by relative path</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ARCHITECTURE -->
+  <div class="panel" id="arch">
+    <div class="card">
+      <h3>How It Works</h3>
+      <div class="arch">Export Solution ZIP    Drop into solutions/    npm run dev           Connect MCP Client
+     |                       |                      |                        |
+     v                       v                      v                        v
+┌──────────┐          ┌──────────┐          ┌──────────────┐          ┌──────────────┐
+│  Power   │          │solutions/│          │  MCP Server  │          │Copilot Studio│
+│ Platform │  ──ZIP─> │  folder  │  ──auto─>│  (Node.js)   │ <──HTTP──│Claude Desktop│
+│          │          │          │  extract │  24 tools    │          │  Any Client  │
+└──────────┘          └──────────┘          └──────────────┘          └──────────────┘</div>
+    </div>
+
+    <div class="card">
+      <h3>Key Design Decisions</h3>
+      <div style="font-size: 0.82rem;">
+        <p style="margin-bottom: 0.5rem;"><strong>Stateless factory pattern:</strong> Each HTTP POST creates a fresh McpServer instance. Required for Copilot Studio's Streamable HTTP transport.</p>
+        <p style="margin-bottom: 0.5rem;"><strong>Zero external dependencies</strong> beyond MCP SDK and Zod. XML parsing uses regex (Power Platform solution XMLs are well-structured and predictable).</p>
+        <p style="margin-bottom: 0.5rem;"><strong>Auto-extract on startup:</strong> Drop ZIPs in solutions/, start server, done. Invalid ZIPs (no solution.xml) are automatically cleaned up.</p>
+        <p style="margin-bottom: 0.5rem;"><strong>Cross-platform:</strong> Works on Windows (PowerShell Expand-Archive), Mac, and Linux (unzip).</p>
+        <p><strong>70+ component type codes</strong> mapped from the Dataverse solutioncomponent entity.</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Project Structure</h3>
+      <pre style="cursor: default; font-size: 0.72rem; background: #1e293b;">powerplatform-solution-mcp/
+├── solutions/          ← DROP YOUR ZIP FILES HERE
+├── extracted/          ← auto-created on startup
+│   └── MySolution/
+│       ├── solution.xml
+│       ├── customizations.xml
+│       ├── Workflows/          ← Cloud Flows
+│       ├── botcomponents/      ← Copilot Studio
+│       ├── WebResources/       ← HTML, JS, CSS
+│       ├── CanvasApps/         ← .msapp files
+│       └── ...                 ← 30+ component folders
+├── src/
+│   └── index.ts        ← THE server (single file)
+├── package.json
+└── tsconfig.json</pre>
+    </div>
+  </div>
+
+  <!-- TROUBLESHOOTING -->
+  <div class="panel" id="faq">
+    <div class="card">
+      <h3>Troubleshooting</h3>
+
+      <div class="faq-item" onclick="this.classList.toggle('open')">
+        <div class="faq-q">"npm run dev" fails with "tsx not found"</div>
+        <div class="faq-a">Run <code>npm install</code> first. <code>tsx</code> is a dev dependency that gets installed automatically.</div>
+      </div>
+
+      <div class="faq-item" onclick="this.classList.toggle('open')">
+        <div class="faq-q">Server starts but shows "Solutions: none"</div>
+        <div class="faq-a">You haven't dropped any ZIP files in <code>solutions/</code> yet, or the ZIPs aren't valid Power Platform solutions. They must contain a <code>solution.xml</code> at the root. Make sure you're exporting from Solutions in make.powerapps.com.</div>
+      </div>
+
+      <div class="faq-item" onclick="this.classList.toggle('open')">
+        <div class="faq-q">"EADDRINUSE: address already in use :::3001"</div>
+        <div class="faq-a">Another process is using port 3001. Kill it with <code>npx kill-port 3001</code>, or use a different port: <code>PORT=3002 npm run dev</code></div>
+      </div>
+
+      <div class="faq-item" onclick="this.classList.toggle('open')">
+        <div class="faq-q">ZIP extracted but shows "not a Power Platform solution"</div>
+        <div class="faq-a">The ZIP doesn't contain <code>solution.xml</code> at the root. Make sure you're exporting from <strong>Solutions</strong> in make.powerapps.com, not downloading something else.</div>
+      </div>
+
+      <div class="faq-item" onclick="this.classList.toggle('open')">
+        <div class="faq-q">Dev tunnel not working</div>
+        <div class="faq-a">Check: (1) MCP server is running (<code>curl http://localhost:3001/health</code>), (2) tunnel shows "Ready to accept connections", (3) use the full URL with <code>/mcp</code> at the end, (4) if "Forbidden", make sure you used <code>--allow-anonymous</code>.</div>
+      </div>
+
+      <div class="faq-item" onclick="this.classList.toggle('open')">
+        <div class="faq-q">Copilot Studio can't discover tools</div>
+        <div class="faq-a">Check: (1) URL ends with <code>/mcp</code> (not <code>/health</code>), (2) tunnel is working (open <code>https://tunnel-url/health</code> in browser), (3) you selected <strong>Model Context Protocol</strong> (not REST API or OpenAPI) when adding the tool.</div>
+      </div>
+
+      <div class="faq-item" onclick="this.classList.toggle('open')">
+        <div class="faq-q">Copilot Studio discovers tools but doesn't use them</div>
+        <div class="faq-a">Enable <strong>Generative orchestration</strong> in your agent's settings. Also make sure tools are enabled (checkboxes in the Tools panel). Try being explicit: "Use the list_flows tool to show me all flows."</div>
+      </div>
+
+      <div class="faq-item" onclick="this.classList.toggle('open')">
+        <div class="faq-q">Can I use this without Copilot Studio?</div>
+        <div class="faq-a">Yes. Any MCP-compatible client works: Claude Desktop, VS Code with MCP extension, or any custom client. Point it to <code>http://localhost:3001/mcp</code>. No tunnel needed for local clients.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- DOCUMENTATION -->
+  <div class="panel" id="docs">
+    <div class="card">
+      <h3>Documentation & Resources</h3>
+
+      <div class="link-card">
+        <div class="link-icon">&#128736;</div>
+        <div class="link-text">
+          <a href="https://github.com/OwnOptic/powerplatform-solution-mcp" target="_blank">GitHub Repository</a>
+          <p>Full source code, README with 24-tool reference, component type codes</p>
+        </div>
+      </div>
+
+      <div class="link-card">
+        <div class="link-icon">&#128214;</div>
+        <div class="link-text">
+          <a href="https://learn.microsoft.com/en-us/microsoft-copilot-studio/agent-extend-mcp" target="_blank">Copilot Studio MCP Integration</a>
+          <p>Official docs for connecting MCP servers to Copilot Studio agents</p>
+        </div>
+      </div>
+
+      <div class="link-card">
+        <div class="link-icon">&#128279;</div>
+        <div class="link-text">
+          <a href="https://modelcontextprotocol.io" target="_blank">MCP Specification</a>
+          <p>Model Context Protocol: the open standard this server implements</p>
+        </div>
+      </div>
+
+      <div class="link-card">
+        <div class="link-icon">&#128230;</div>
+        <div class="link-text">
+          <a href="https://learn.microsoft.com/en-us/power-platform/alm/use-source-control-solution-files" target="_blank">Power Platform Solution File Structure</a>
+          <p>MS Learn reference for understanding solution ZIP contents</p>
+        </div>
+      </div>
+
+      <div class="link-card">
+        <div class="link-icon">&#127899;</div>
+        <div class="link-text">
+          <a href="https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/get-started" target="_blank">Dev Tunnels Getting Started</a>
+          <p>Microsoft's tool for exposing local servers to the internet</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Configuration</h3>
+      <table style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
+        <thead>
+          <tr><th style="text-align: left; padding: 0.4rem; background: #f1f5f9;">Variable</th><th style="text-align: left; padding: 0.4rem; background: #f1f5f9;">Default</th><th style="text-align: left; padding: 0.4rem; background: #f1f5f9;">Description</th></tr>
+        </thead>
+        <tbody>
+          <tr><td style="padding: 0.35rem 0.4rem;"><code>PORT</code></td><td style="padding: 0.35rem 0.4rem;">3001</td><td style="padding: 0.35rem 0.4rem;">HTTP server port</td></tr>
+        </tbody>
+      </table>
+      <pre onclick="copyPre(this)" style="margin-top: 0.5rem;">PORT=8080 npm run dev</pre>
+    </div>
+
+    <div class="card">
+      <h3>Tech Stack</h3>
+      <table style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
+        <thead>
+          <tr><th style="text-align: left; padding: 0.4rem; background: #f1f5f9;">Component</th><th style="text-align: left; padding: 0.4rem; background: #f1f5f9;">Technology</th></tr>
+        </thead>
+        <tbody>
+          <tr><td style="padding: 0.35rem 0.4rem;">Runtime</td><td style="padding: 0.35rem 0.4rem;">Node.js 18+ (ES2022)</td></tr>
+          <tr><td style="padding: 0.35rem 0.4rem;">MCP SDK</td><td style="padding: 0.35rem 0.4rem;">@modelcontextprotocol/sdk (Streamable HTTP)</td></tr>
+          <tr><td style="padding: 0.35rem 0.4rem;">Validation</td><td style="padding: 0.35rem 0.4rem;">Zod</td></tr>
+          <tr><td style="padding: 0.35rem 0.4rem;">XML Parsing</td><td style="padding: 0.35rem 0.4rem;">Regex-based (no external parser)</td></tr>
+          <tr><td style="padding: 0.35rem 0.4rem;">Transport</td><td style="padding: 0.35rem 0.4rem;">Stateless Streamable HTTP (factory pattern)</td></tr>
+          <tr><td style="padding: 0.35rem 0.4rem;">Platforms</td><td style="padding: 0.35rem 0.4rem;">Windows, Mac, Linux</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Tab switching
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      tab.classList.add('active');
+      document.getElementById(tab.dataset.tab).classList.add('active');
+    });
+  });
+
+  // Step toggle
+  function toggleStep(id) {
+    document.getElementById(id).classList.toggle('open');
+  }
+
+  // Progress tracking
+  function updateProgress() {
+    const checks = document.querySelectorAll('.step-check');
+    const done = document.querySelectorAll('.step-check:checked');
+    const total = checks.length;
+    const count = done.length;
+    const pct = Math.round((count / total) * 100);
+
+    const badge = document.getElementById('setup-badge');
+    const bar = document.getElementById('setup-progress');
+    if (badge) { badge.textContent = count + ' / ' + total; }
+    if (bar) { bar.style.width = pct + '%'; }
+
+    checks.forEach(cb => {
+      cb.closest('.step').classList.toggle('done', cb.checked);
+    });
+  }
+
+  // Copy code blocks
+  function copyPre(el) {
+    const text = el.textContent.replace(/click to copy$/, '').trim();
+    navigator.clipboard.writeText(text).then(() => {
+      el.classList.add('copied');
+      setTimeout(() => el.classList.remove('copied'), 1500);
+    });
+  }
+</script>
+</body>
+</html>

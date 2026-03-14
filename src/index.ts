@@ -744,6 +744,139 @@ function createMcpServer(): McpServer {
       return { content: [{ type: "text", text: content.substring(0, 50000) }] };
     });
 
+  // 25. load_solution_context — the "give me everything" tool
+  server.tool("load_solution_context",
+    "Load FULL context for a solution in one call: metadata, all flows with trigger/action details, agent system prompt (untruncated), all bot components, connectors, entities, roles, env vars, and folder structure. Call this first to deeply understand a solution before answering questions.",
+    solParam,
+    async ({ solution }) => {
+      const solDir = solution;
+      const info = parseSolutionXml(solDir);
+      if (!info) return { content: [{ type: "text", text: "Solution not found." }] };
+
+      const sections: string[] = [];
+
+      // ── Metadata ──
+      sections.push(`# ${info.displayName || info.uniqueName}`);
+      sections.push(`Version: ${info.version} | Managed: ${info.managed ? "Yes" : "No"} | Publisher: ${info.publisher.name} (${info.publisher.prefix})`);
+      const typeCounts = new Map<string, number>();
+      for (const rc of info.rootComponents) typeCounts.set(rc.typeName, (typeCounts.get(rc.typeName) || 0) + 1);
+      if (typeCounts.size) {
+        sections.push(`\n## Root Components (${info.rootComponentCount})`);
+        for (const [t, c] of typeCounts) sections.push(`- ${t}: ${c}`);
+      }
+
+      // ── Agent System Prompt (FULL, untruncated) ──
+      const botComps = parseBotComponents(solDir);
+      const gpt = botComps.find((c) => c.type === "gpt");
+      if (gpt) {
+        const data = getBotComponentData(solDir, gpt.folder);
+        if (data) {
+          sections.push(`\n## Agent System Prompt (full)`);
+          sections.push(data);
+        }
+      }
+
+      // ── Flows with full action details ──
+      const flows = parseFlows(solDir);
+      if (flows.length) {
+        sections.push(`\n## Flows (${flows.length})`);
+        for (const f of flows) {
+          sections.push(`\n### ${f.name} [${f.categoryName}, ${f.state}]`);
+          if (f.description) sections.push(f.description);
+          const detail = getFlowDefinition(solDir, f.jsonFile);
+          if (detail) {
+            const desc = describeFlow(detail);
+            if (desc.trigger) sections.push(`Trigger: ${desc.trigger.type} — ${desc.trigger.kind || ""} ${JSON.stringify(desc.trigger.inputs || {}).substring(0, 500)}`);
+            if (desc.actions.length) {
+              sections.push(`Actions (${desc.actions.length}):`);
+              for (const a of desc.actions) sections.push(`  - ${a.name} [${a.type}]${a.connection ? ` via ${a.connection}` : ""}`);
+            }
+            if (desc.connectors.length) sections.push(`Connectors: ${desc.connectors.join(", ")}`);
+          }
+        }
+      }
+
+      // ── Bot Components ──
+      const topics = botComps.filter((c) => c.type === "topic");
+      const actions = botComps.filter((c) => c.type === "action");
+      const triggers = botComps.filter((c) => c.type === "trigger");
+      const others = botComps.filter((c) => !["topic", "action", "trigger", "gpt"].includes(c.type));
+
+      if (topics.length) {
+        sections.push(`\n## Bot Topics (${topics.length})`);
+        for (const t of topics) sections.push(`- ${t.name} (${t.folder})`);
+      }
+      if (actions.length) {
+        sections.push(`\n## Bot Actions (${actions.length})`);
+        for (const a of actions) sections.push(`- ${a.name} (${a.folder})`);
+      }
+      if (triggers.length) {
+        sections.push(`\n## External Triggers (${triggers.length})`);
+        for (const t of triggers) sections.push(`- ${t.name} (${t.folder})`);
+      }
+      if (others.length) {
+        sections.push(`\n## Other Bot Components (${others.length})`);
+        for (const o of others) sections.push(`- [${o.type}] ${o.name}`);
+      }
+
+      // ── Connectors ──
+      const connectors = parseConnectors(solDir);
+      if (connectors.length) {
+        sections.push(`\n## Connection References (${connectors.length})`);
+        for (const c of connectors) sections.push(`- ${c.name} → ${c.connector} (${c.id})`);
+      }
+
+      // ── Entities ──
+      const entities = parseEntities(solDir);
+      if (entities.length) {
+        sections.push(`\n## Entities/Tables (${entities.length})`);
+        for (const e of entities) sections.push(`- ${e.displayName} (${e.name}) — ${e.formCount} forms, ${e.viewCount} views, ${e.chartCount} charts`);
+      }
+
+      // ── Security Roles ──
+      const roles = parseRoles(solDir);
+      if (roles.length) {
+        sections.push(`\n## Security Roles (${roles.length})`);
+        for (const r of roles) sections.push(`- ${r.name} (${r.privilegeCount} privileges)`);
+      }
+
+      // ── Environment Variables ──
+      const envVars = parseEnvironmentVariables(solDir);
+      if (envVars.length) {
+        sections.push(`\n## Environment Variables (${envVars.length})`);
+        for (const v of envVars) sections.push(`- ${v.displayName} [${v.type}]: ${v.defaultValue || "(no default)"}`);
+      }
+
+      // ── Custom Connectors ──
+      const customConnectors = parseCustomConnectors(solDir);
+      if (customConnectors.length) {
+        sections.push(`\n## Custom Connectors (${customConnectors.length})`);
+        for (const c of customConnectors) sections.push(`- ${c.title} (${c.operationCount} operations, auth: ${c.authType})`);
+      }
+
+      // ── Other components ──
+      const webResources = parseWebResources(solDir);
+      if (webResources.length) sections.push(`\n## Web Resources: ${webResources.length} files`);
+      const canvasApps = parseCanvasApps(solDir);
+      if (canvasApps.length) sections.push(`## Canvas Apps: ${canvasApps.map((a) => a.file).join(", ")}`);
+      const plugins = parsePluginAssemblies(solDir);
+      if (plugins.length) sections.push(`## Plugin Assemblies: ${plugins.length}`);
+      const appModules = parseAppModules(solDir);
+      if (appModules.length) sections.push(`## Model-Driven Apps: ${appModules.map((a) => a.name).join(", ")}`);
+      const optionSets = parseOptionSets(solDir);
+      if (optionSets.length) sections.push(`## Global Option Sets: ${optionSets.length}`);
+
+      // ── Structure ──
+      const structure = detectFolders(solDir);
+      if (typeof structure === "object" && "folders" in structure) {
+        sections.push(`\n## File Structure`);
+        for (const f of structure.folders) sections.push(`- ${f.name}/ — ${f.description}`);
+      }
+
+      const full = sections.join("\n");
+      return { content: [{ type: "text", text: full.substring(0, 100000) }] };
+    });
+
   // ── MCP Resources ────────────────────────────────────────────────
   // Resources provide context the agent can read without a tool call.
   // Copilot Studio shows these in the "Resources" tab.
@@ -845,7 +978,7 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
 
   if (req.url === "/" || req.url === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "ok", server: "Power Platform Solution Explorer MCP", version: "2.0.0", tools: 24, solutions: listSolutionDirs() }));
+    res.end(JSON.stringify({ status: "ok", server: "Power Platform Solution Explorer MCP", version: "2.0.0", tools: 25, solutions: listSolutionDirs() }));
     return;
   }
 
@@ -885,7 +1018,7 @@ if (newlyExtracted.length) console.log(`  New extractions: ${newlyExtracted.join
 httpServer.listen(PORT, () => {
   console.log(`  MCP endpoint:    http://localhost:${PORT}/mcp`);
   console.log(`  Health check:    http://localhost:${PORT}/health`);
-  console.log(`  Tools:           24`);
+  console.log(`  Tools:           25`);
   console.log(`  Solutions:       ${listSolutionDirs().join(", ") || "none"}`);
   console.log(`\n  Drop .zip files into ${SOLUTIONS_DIR} and restart.\n`);
 });

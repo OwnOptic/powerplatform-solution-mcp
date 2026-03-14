@@ -480,11 +480,32 @@ powerplatform-solution-mcp/
 | Environment Variable | Default | Description |
 |---|---|---|
 | `PORT` | `3001` | HTTP server port |
+| `MCP_API_KEY` | *(empty)* | API key for authenticating requests to `/mcp`. If not set, the server allows anonymous access. |
+| `MCP_API_KEY_HEADER` | `api-key` | Header name the server checks for the API key. Must match the header name configured in Copilot Studio. |
 
-Example:
+Examples:
 ```bash
+# Open access (default)
 PORT=8080 npm run dev
+
+# With API key auth
+MCP_API_KEY=my-secret-key npm run dev
+
+# With custom header name (must match Copilot Studio config)
+MCP_API_KEY=my-secret-key MCP_API_KEY_HEADER=api-key npm run dev
 ```
+
+### Copilot Studio API Key Setup
+
+When registering the MCP tool in Copilot Studio with API key auth:
+
+1. Go to **Tools** > **Add a tool** > **MCP**
+2. Under **Authentication**, select **API key**
+3. Set **Type** to **Header**
+4. Set **Header name** to `api-key` (or whatever you set in `MCP_API_KEY_HEADER`)
+5. Paste your API key value (must match `MCP_API_KEY`)
+
+The health endpoint (`/health`) is always open, so you can verify the server is running without auth.
 
 ---
 

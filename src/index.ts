@@ -8,6 +8,8 @@ import { z } from "zod";
 
 // ── Config ──────────────────────────────────────────────────────────
 const PORT = parseInt(process.env.PORT || "3001", 10);
+const MCP_API_KEY = process.env.MCP_API_KEY || "sol-explorer-2026";
+const MCP_API_KEY_HEADER = (process.env.MCP_API_KEY_HEADER || "contoso-hr-demo-2026").toLowerCase();
 const BASE_DIR = resolve(
   dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1")),
   ".."
@@ -976,6 +978,16 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
   res.setHeader("Access-Control-Allow-Headers", "*");
   if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
 
+  // ── API Key auth (skip for health check) ──
+  if (MCP_API_KEY && req.url === "/mcp") {
+    const provided = req.headers[MCP_API_KEY_HEADER] as string | undefined;
+    if (!provided || provided !== MCP_API_KEY) {
+      res.writeHead(401, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Unauthorized. Invalid or missing API key." }));
+      return;
+    }
+  }
+
   if (req.url === "/" || req.url === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ status: "ok", server: "Power Platform Solution Explorer MCP", version: "2.0.0", tools: 25, solutions: listSolutionDirs() }));
@@ -1018,6 +1030,7 @@ if (newlyExtracted.length) console.log(`  New extractions: ${newlyExtracted.join
 httpServer.listen(PORT, () => {
   console.log(`  MCP endpoint:    http://localhost:${PORT}/mcp`);
   console.log(`  Health check:    http://localhost:${PORT}/health`);
+  console.log(`  Auth:            ${MCP_API_KEY ? `API key via "${MCP_API_KEY_HEADER}" header` : "none (open access)"}`);
   console.log(`  Tools:           25`);
   console.log(`  Solutions:       ${listSolutionDirs().join(", ") || "none"}`);
   console.log(`\n  Drop .zip files into ${SOLUTIONS_DIR} and restart.\n`);

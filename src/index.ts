@@ -282,12 +282,74 @@ function parseEntities(solDir: string) {
     const name = xmlTag(e, "Name");
     const localizedNames = xmlTagAll(e, "LocalizedName");
     const displayName = xmlAttr(localizedNames.find((l) => l.includes('languagecode="1033"')) || "", "description") || name;
-    const forms = xmlTagAll(e, "systemform").length;
-    const views = xmlTagAll(e, "savedquery").length;
-    const charts = xmlTagAll(e, "savedqueryvisualization").length;
+    const formCount = xmlTagAll(e, "systemform").length;
+    const viewCount = xmlTagAll(e, "savedquery").length;
+    const chartCount = xmlTagAll(e, "savedqueryvisualization").length;
     const hasRibbon = e.includes("<RibbonDiffXml>");
-    return { name, displayName, forms, views, charts, hasRibbon };
+    // Parse columns/attributes
+    const attributes = xmlTagAll(e, "attribute").map((a) => {
+      const attrName = xmlTag(a, "LogicalName") || xmlAttr(a, "PhysicalName") || "";
+      const attrDisplayNames = xmlTagAll(a, "displayname");
+      const attrDisplay = xmlAttr(attrDisplayNames.find((d) => d.includes('languagecode="1033"')) || "", "description") || attrName;
+      const attrType = xmlTag(a, "Type") || xmlAttr(a, "Type") || "";
+      const required = xmlTag(a, "RequiredLevel") || "";
+      return { name: attrName, displayName: attrDisplay, type: attrType, required };
+    }).filter(a => a.name);
+    // Parse relationships
+    const oneToMany = xmlTagAll(e, "OneToManyRelationship").map((r) => ({
+      name: xmlAttr(r, "Name") || xmlTag(r, "SchemaName"),
+      referencedEntity: xmlTag(r, "ReferencedEntityName") || xmlTag(r, "ReferencedEntity"),
+      referencingEntity: xmlTag(r, "ReferencingEntityName") || xmlTag(r, "ReferencingEntity"),
+      referencingAttribute: xmlTag(r, "ReferencingAttributeName") || xmlTag(r, "ReferencingAttribute"),
+    })).filter(r => r.name);
+    const manyToMany = xmlTagAll(e, "ManyToManyRelationship").map((r) => ({
+      name: xmlAttr(r, "Name") || xmlTag(r, "SchemaName"),
+      entity1: xmlTag(r, "Entity1LogicalName"),
+      entity2: xmlTag(r, "Entity2LogicalName"),
+      intersectEntity: xmlTag(r, "IntersectEntityName"),
+    })).filter(r => r.name);
+    // Parse keys
+    const keys = xmlTagAll(e, "EntityKey").map((k) => ({
+      name: xmlTag(k, "SchemaName") || xmlTag(k, "LogicalName"),
+      attributes: xmlTagAll(k, "EntityKeyAttribute").map(ka => xmlTag(ka, "AttributeName") || ka.replace(/<[^>]+>/g, "").trim()),
+    })).filter(k => k.name);
+    return { name, displayName, formCount, viewCount, chartCount, hasRibbon, attributeCount: attributes.length, attributes, relationships: { oneToMany, manyToMany }, keys };
   });
+}
+
+function getEntitySchema(solDir: string, entityName: string) {
+  const entities = parseEntities(solDir);
+  return entities.find(e => e.name?.toLowerCase() === entityName.toLowerCase()) || null;
+}
+
+// ── Knowledge Sources ──────────────────────────────────────────────
+function parseKnowledgeSources(solDir: string) {
+  const botComps = parseBotComponents(solDir);
+  const knowledgeSources = botComps.filter(c => c.type === "knowledge_source");
+  const knowledgeFiles = botComps.filter(c => c.type === "knowledge_file");
+  const results: Array<{type: string; name: string; folder: string; config: any}> = [];
+  for (const ks of knowledgeSources) {
+    const data = getBotComponentData(solDir, ks.folder);
+    let config: any = {};
+    if (data) {
+      try { config = JSON.parse(data); } catch {
+        // YAML or other format, store raw
+        config = { raw: data.substring(0, 2000) };
+      }
+    }
+    results.push({ type: "knowledge_source", name: ks.name, folder: ks.folder, config });
+  }
+  for (const kf of knowledgeFiles) {
+    const data = getBotComponentData(solDir, kf.folder);
+    let config: any = {};
+    if (data) {
+      try { config = JSON.parse(data); } catch {
+        config = { raw: data.substring(0, 2000) };
+      }
+    }
+    results.push({ type: "knowledge_file", name: kf.name, folder: kf.folder, config });
+  }
+  return results;
 }
 
 // ── NEW: Parse Security Roles ───────────────────────────────────────
@@ -664,8 +726,22 @@ function createMcpServer(): McpServer {
     });
 
   // 13. list_entities
-  server.tool("list_entities", "List all Dataverse entities/tables in the solution with their forms, views, and charts count", solParam,
-    async ({ solution }) => ({ content: [{ type: "text", text: JSON.stringify(parseEntities(solution), null, 2) }] }));
+  server.tool("list_entities", "List all Dataverse entities/tables in the solution with forms, views, charts, columns, relationships, and keys", solParam,
+    async ({ solution }) => {
+      const entities = parseEntities(solution);
+      const summary = entities.map(e => ({
+        name: e.name,
+        displayName: e.displayName,
+        formCount: e.formCount,
+        viewCount: e.viewCount,
+        chartCount: e.chartCount,
+        attributeCount: e.attributeCount,
+        relationshipCount: (e.relationships?.oneToMany?.length || 0) + (e.relationships?.manyToMany?.length || 0),
+        keyCount: e.keys?.length || 0,
+        hasRibbon: e.hasRibbon,
+      }));
+      return { content: [{ type: "text", text: JSON.stringify(summary, null, 2) }] };
+    });
 
   // 14. list_security_roles
   server.tool("list_security_roles", "List all security roles defined in the solution with privilege counts", solParam,
@@ -746,7 +822,24 @@ function createMcpServer(): McpServer {
       return { content: [{ type: "text", text: content.substring(0, 50000) }] };
     });
 
-  // 25. load_solution_context — the "give me everything" tool
+  // 25. get_entity_schema
+  server.tool("get_entity_schema", "Get the full Dataverse schema for a single entity/table: all columns/attributes, relationships (1:N, N:N), keys, forms, views, and charts",
+    { ...solParam, entity_name: z.string().describe("Logical name of the entity (e.g. cr_leave_request, account)") },
+    async ({ solution, entity_name }) => {
+      const schema = getEntitySchema(solution, entity_name);
+      if (!schema) return { content: [{ type: "text", text: `Entity "${entity_name}" not found in this solution.` }] };
+      return { content: [{ type: "text", text: JSON.stringify(schema, null, 2) }] };
+    });
+
+  // 26. list_knowledge_sources
+  server.tool("list_knowledge_sources", "List all Copilot Studio knowledge sources and knowledge files (SharePoint sites, Dataverse search, uploaded files, web URLs)", solParam,
+    async ({ solution }) => {
+      const sources = parseKnowledgeSources(solution);
+      if (!sources.length) return { content: [{ type: "text", text: "No knowledge sources found in this solution." }] };
+      return { content: [{ type: "text", text: JSON.stringify(sources, null, 2) }] };
+    });
+
+  // 27. load_solution_context — the "give me everything" tool
   server.tool("load_solution_context",
     "Load FULL context for a solution in one call: metadata, all flows with trigger/action details, agent system prompt (untruncated), all bot components, connectors, entities, roles, env vars, and folder structure. Call this first to deeply understand a solution before answering questions.",
     solParam,
@@ -807,7 +900,8 @@ function createMcpServer(): McpServer {
       const topics = botComps.filter((c) => c.type === "topic");
       const actions = botComps.filter((c) => c.type === "action");
       const triggers = botComps.filter((c) => c.type === "trigger");
-      const others = botComps.filter((c) => !["topic", "action", "trigger", "gpt"].includes(c.type));
+      const knowledgeComps = botComps.filter((c) => c.type === "knowledge_source" || c.type === "knowledge_file");
+      const others = botComps.filter((c) => !["topic", "action", "trigger", "gpt", "knowledge_source", "knowledge_file"].includes(c.type));
 
       if (topics.length) {
         sections.push(`\n## Bot Topics (${topics.length})`);
@@ -820,6 +914,10 @@ function createMcpServer(): McpServer {
       if (triggers.length) {
         sections.push(`\n## External Triggers (${triggers.length})`);
         for (const t of triggers) sections.push(`- ${t.name} (${t.folder})`);
+      }
+      if (knowledgeComps.length) {
+        sections.push(`\n## Knowledge Sources (${knowledgeComps.length})`);
+        for (const k of knowledgeComps) sections.push(`- [${k.type}] ${k.name} (${k.folder})`);
       }
       if (others.length) {
         sections.push(`\n## Other Bot Components (${others.length})`);
@@ -837,7 +935,10 @@ function createMcpServer(): McpServer {
       const entities = parseEntities(solDir);
       if (entities.length) {
         sections.push(`\n## Entities/Tables (${entities.length})`);
-        for (const e of entities) sections.push(`- ${e.displayName} (${e.name}) — ${e.formCount} forms, ${e.viewCount} views, ${e.chartCount} charts`);
+        for (const e of entities) {
+          const relCount = (e.relationships?.oneToMany?.length || 0) + (e.relationships?.manyToMany?.length || 0);
+          sections.push(`- ${e.displayName} (${e.name}) — ${e.attributeCount} columns, ${e.formCount} forms, ${e.viewCount} views, ${relCount} relationships, ${e.keys?.length || 0} keys`);
+        }
       }
 
       // ── Security Roles ──
@@ -859,6 +960,13 @@ function createMcpServer(): McpServer {
       if (customConnectors.length) {
         sections.push(`\n## Custom Connectors (${customConnectors.length})`);
         for (const c of customConnectors) sections.push(`- ${c.title} (${c.operationCount} operations, auth: ${c.authType})`);
+      }
+
+      // ── Knowledge Sources ──
+      const knowledgeSources = parseKnowledgeSources(solDir);
+      if (knowledgeSources.length) {
+        sections.push(`\n## Knowledge Sources (${knowledgeSources.length})`);
+        for (const ks of knowledgeSources) sections.push(`- [${ks.type}] ${ks.name}`);
       }
 
       // ── Other components ──
@@ -995,7 +1103,7 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
 
   if (req.url === "/" || req.url === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "ok", server: "Power Platform Solution Explorer MCP", version: "2.0.0", tools: 25, solutions: listSolutionDirs() }));
+    res.end(JSON.stringify({ status: "ok", server: "Power Platform Solution Explorer MCP", version: "2.0.0", tools: 27, solutions: listSolutionDirs() }));
     return;
   }
 
@@ -1036,7 +1144,7 @@ httpServer.listen(PORT, () => {
   console.log(`  MCP endpoint:    http://localhost:${PORT}/mcp`);
   console.log(`  Health check:    http://localhost:${PORT}/health`);
   console.log(`  Auth:            ${MCP_API_KEY ? `API key via "${MCP_API_KEY_HEADER}" header` : "none (open access)"}`);
-  console.log(`  Tools:           25`);
+  console.log(`  Tools:           27`);
   console.log(`  Solutions:       ${listSolutionDirs().join(", ") || "none"}`);
   console.log(`\n  Drop .zip files into ${SOLUTIONS_DIR} and restart.\n`);
 });

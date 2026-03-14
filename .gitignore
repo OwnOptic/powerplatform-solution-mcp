@@ -1,6 +1,7 @@
 node_modules/
 build/
 extracted/
-solutions/
+solutions/*
+!solutions/.gitkeep
 *.zip
 .env

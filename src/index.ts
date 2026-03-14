@@ -7,7 +7,7 @@ import { execSync } from "node:child_process";
 import { z } from "zod";
 
 // ── Config ──────────────────────────────────────────────────────────
-const PORT = 3001;
+const PORT = parseInt(process.env.PORT || "3001", 10);
 const BASE_DIR = resolve(
   dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1")),
   ".."
@@ -66,12 +66,21 @@ function autoExtractZips(): string[] {
     if (existsSync(targetDir)) continue;
     try {
       mkdirSync(targetDir, { recursive: true });
-      execSync(`powershell -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${targetDir}' -Force"`, { timeout: 30000 });
+      const isWindows = process.platform === "win32";
+      if (isWindows) {
+        execSync(`powershell -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${targetDir}' -Force"`, { timeout: 30000 });
+      } else {
+        execSync(`unzip -o -q "${zipPath}" -d "${targetDir}"`, { timeout: 30000 });
+      }
       if (existsSync(join(targetDir, "solution.xml"))) {
         extracted.push(folderName);
         console.log(`  ✓ Extracted: ${zipFile} → ${folderName}`);
       } else {
-        execSync(`powershell -Command "Remove-Item -Path '${targetDir}' -Recurse -Force"`, { timeout: 10000 });
+        if (process.platform === "win32") {
+          execSync(`powershell -Command "Remove-Item -Path '${targetDir}' -Recurse -Force"`, { timeout: 10000 });
+        } else {
+          execSync(`rm -rf "${targetDir}"`, { timeout: 10000 });
+        }
         console.log(`  ✗ Skipped: ${zipFile} (not a Power Platform solution)`);
       }
     } catch (err: any) {
@@ -739,8 +748,15 @@ function createMcpServer(): McpServer {
   // Resources provide context the agent can read without a tool call.
   // Copilot Studio shows these in the "Resources" tab.
 
-  // Dynamic resource for each solution's overview
-  for (const solDir of listSolutionDirs()) {
+  // Dynamic resources for the 5 most recently extracted solutions (sorted by folder mtime)
+  const allSols = listSolutionDirs();
+  const recentSols = allSols
+    .map((d) => ({ name: d, mtime: statSync(join(EXTRACTED_DIR, d)).mtimeMs }))
+    .sort((a, b) => b.mtime - a.mtime)
+    .slice(0, 5)
+    .map((s) => s.name);
+
+  for (const solDir of recentSols) {
     const info = parseSolutionXml(solDir);
     const displayName = info?.displayName || info?.uniqueName || solDir;
 
@@ -858,8 +874,8 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
 });
 
 // ── Startup ─────────────────────────────────────────────────────────
-console.log(`\n  Power Platform Solution Explorer MCP Server v2.0`);
-console.log(`  ─────────────────────────────────────────────────`);
+console.log(`\n  Power Platform Solution Explorer MCP Server`);
+console.log(`  ──────────────────────────────────────────`);
 console.log(`  ZIP drop folder: ${SOLUTIONS_DIR}`);
 console.log(`  Extracted to:    ${EXTRACTED_DIR}`);
 

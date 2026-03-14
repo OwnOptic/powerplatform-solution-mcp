@@ -47,6 +47,9 @@ const COMPONENT_TYPES: Record<number, string> = {
   300: "Canvas App", 371: "Connector (Custom Connector)",
   380: "Environment Variable Definition", 381: "Environment Variable Value",
   400: "AI Project Type", 401: "AI Project", 402: "AI Configuration",
+  430: "Entity Analytics Configuration", 431: "Attribute Image Configuration",
+  432: "Entity Image Configuration",
+  10150: "Connection Reference", 10192: "App Action",
 };
 
 // ── Auto-extract ZIPs on startup ────────────────────────────────────
@@ -448,6 +451,9 @@ function detectFolders(solDir: string) {
     ServiceEndpoints: "Service Endpoints (Webhooks)",
     SdkMessageProcessingSteps: "SDK Message Processing Steps",
     EntityRelationships: "N:N Relationships", ConnectionRoles: "Connection Roles",
+    appactions: "App Actions", pluginpackages: "Plugin Packages (NuGet)",
+    ImportMaps: "Import Maps", SLAs: "SLAs",
+    RoutingRules: "Routing Rules", ConvertRules: "Convert Rules",
   };
   const entries = readdirSync(base);
   const folders = entries.filter((e) => statSync(join(base, e)).isDirectory());

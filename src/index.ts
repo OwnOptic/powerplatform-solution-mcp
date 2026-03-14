@@ -12,46 +12,61 @@ const BASE_DIR = resolve(
   dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1")),
   ".."
 );
-const SOLUTIONS_DIR = join(BASE_DIR, "solutions");  // Drop .zip files here
-const EXTRACTED_DIR = join(BASE_DIR, "extracted");   // Auto-extracted output
+const SOLUTIONS_DIR = join(BASE_DIR, "solutions");
+const EXTRACTED_DIR = join(BASE_DIR, "extracted");
+
+// ── Component Type Code Map (from Dataverse solutioncomponent entity) ──
+const COMPONENT_TYPES: Record<number, string> = {
+  1: "Entity (Table)", 2: "Attribute (Column)", 3: "Relationship",
+  4: "Attribute Picklist Value", 5: "Attribute Lookup Value",
+  6: "View Attribute", 7: "Localized Label", 8: "Relationship Extra Condition",
+  9: "Option Set (Choice)", 10: "Entity Relationship", 11: "Entity Relationship Role",
+  13: "Managed Property", 14: "Entity Key", 16: "Privilege",
+  20: "Role (Security Role)", 21: "Role Privilege", 22: "Display String",
+  24: "Form", 25: "Organization", 26: "Saved Query (View)",
+  29: "Workflow (Process / Cloud Flow)", 31: "Report",
+  32: "Report Entity", 33: "Report Category", 34: "Report Visibility",
+  36: "Email Template", 37: "Contract Template", 38: "KB Article Template",
+  39: "Mail Merge Template", 44: "Duplicate Rule", 45: "Duplicate Rule Condition",
+  46: "Entity Map", 47: "Attribute Map", 48: "Ribbon Command",
+  49: "Ribbon Context Group", 50: "Ribbon Customization",
+  52: "Ribbon Rule", 53: "Ribbon Tab To Command Map", 55: "Ribbon Diff",
+  59: "Saved Query Visualization (Chart)", 60: "System Form",
+  61: "Web Resource", 62: "Site Map", 63: "Connection Role",
+  64: "Complex Control", 65: "Hierarchy Rule",
+  66: "Custom Control (PCF)", 68: "Custom Control Default Config",
+  70: "Field Security Profile", 71: "Field Permission",
+  90: "Plugin Type", 91: "Plugin Assembly",
+  92: "SDK Message Processing Step", 93: "SDK Message Processing Step Image",
+  95: "Service Endpoint", 150: "Routing Rule", 151: "Routing Rule Item",
+  152: "SLA", 153: "SLA Item",
+  154: "Convert Rule (Automatic Record Creation)", 155: "Convert Rule Item",
+  161: "Mobile Offline Profile", 162: "Mobile Offline Profile Item",
+  165: "Similarity Rule", 166: "Data Source Mapping",
+  201: "SDK Message", 202: "SDK Message Filter",
+  300: "Canvas App", 371: "Connector (Custom Connector)",
+  380: "Environment Variable Definition", 381: "Environment Variable Value",
+  400: "AI Project Type", 401: "AI Project", 402: "AI Configuration",
+};
 
 // ── Auto-extract ZIPs on startup ────────────────────────────────────
 function autoExtractZips(): string[] {
   mkdirSync(SOLUTIONS_DIR, { recursive: true });
   mkdirSync(EXTRACTED_DIR, { recursive: true });
-
   const extracted: string[] = [];
-
-  if (!existsSync(SOLUTIONS_DIR)) return extracted;
-
-  const zips = readdirSync(SOLUTIONS_DIR).filter((f) =>
-    f.toLowerCase().endsWith(".zip")
-  );
-
+  const zips = readdirSync(SOLUTIONS_DIR).filter((f) => f.toLowerCase().endsWith(".zip"));
   for (const zipFile of zips) {
     const zipPath = join(SOLUTIONS_DIR, zipFile);
     const folderName = zipFile.replace(/\.zip$/i, "");
     const targetDir = join(EXTRACTED_DIR, folderName);
-
-    if (existsSync(targetDir)) {
-      // Already extracted — skip
-      continue;
-    }
-
+    if (existsSync(targetDir)) continue;
     try {
       mkdirSync(targetDir, { recursive: true });
-      // Use PowerShell to extract (works on Windows)
-      execSync(
-        `powershell -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${targetDir}' -Force"`,
-        { timeout: 30000 }
-      );
-
-      // Verify it's a valid PP solution (has solution.xml)
+      execSync(`powershell -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${targetDir}' -Force"`, { timeout: 30000 });
       if (existsSync(join(targetDir, "solution.xml"))) {
         extracted.push(folderName);
         console.log(`  ✓ Extracted: ${zipFile} → ${folderName}`);
       } else {
-        // Not a valid solution — clean up
         execSync(`powershell -Command "Remove-Item -Path '${targetDir}' -Recurse -Force"`, { timeout: 10000 });
         console.log(`  ✗ Skipped: ${zipFile} (not a Power Platform solution)`);
       }
@@ -59,207 +74,409 @@ function autoExtractZips(): string[] {
       console.error(`  ✗ Failed to extract ${zipFile}: ${err.message}`);
     }
   }
-
   return extracted;
 }
 
-// ── Solution Parser ─────────────────────────────────────────────────
-
-interface SolutionInfo {
-  uniqueName: string;
-  displayName: string;
-  version: string;
-  managed: boolean;
-  publisher: { name: string; prefix: string; description: string };
-  rootComponentCount: number;
-}
-
-interface FlowInfo {
-  id: string;
-  name: string;
-  description: string;
-  jsonFile: string;
-  state: string;
-}
-
-interface BotComponent {
-  folder: string;
-  schemaName: string;
-  type: "topic" | "action" | "trigger" | "gpt" | "unknown";
-  name: string;
-  hasData: boolean;
-}
-
-interface ConnectorRef {
-  logicalName: string;
-  connectorId: string;
-  displayName: string;
-}
-
+// ── XML Helpers ─────────────────────────────────────────────────────
 function xmlAttr(xml: string, attr: string): string {
   const re = new RegExp(`${attr}="([^"]*)"`, "i");
-  const m = xml.match(re);
-  return m ? m[1] : "";
+  return xml.match(re)?.[1] || "";
 }
 
 function xmlTag(xml: string, tag: string): string {
   const re = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`, "i");
-  const m = xml.match(re);
-  return m ? m[1].trim() : "";
+  return xml.match(re)?.[1]?.trim() || "";
 }
 
 function xmlTagAll(xml: string, tag: string): string[] {
-  const re = new RegExp(`<${tag}[^>]*>[\\s\\S]*?</${tag}>`, "gi");
-  return xml.match(re) || [];
+  return xml.match(new RegExp(`<${tag}[^>]*>[\\s\\S]*?</${tag}>`, "gi")) || [];
 }
 
 function xmlTagSelfClosing(xml: string, tag: string): string[] {
-  const re = new RegExp(`<${tag}\\s[^>]*/?>`, "gi");
-  return xml.match(re) || [];
+  return xml.match(new RegExp(`<${tag}\\s[^>]*/?>`, "gi")) || [];
 }
 
+function xmlTagBoth(xml: string, tag: string): string[] {
+  const full = xmlTagAll(xml, tag);
+  const self = xmlTagSelfClosing(xml, tag);
+  const seen = new Set(full);
+  return [...full, ...self.filter((s) => !seen.has(s))];
+}
+
+// ── File system helpers ─────────────────────────────────────────────
 function listSolutionDirs(): string[] {
   if (!existsSync(EXTRACTED_DIR)) return [];
-  return readdirSync(EXTRACTED_DIR).filter((d) =>
-    statSync(join(EXTRACTED_DIR, d)).isDirectory()
-  );
+  return readdirSync(EXTRACTED_DIR).filter((d) => statSync(join(EXTRACTED_DIR, d)).isDirectory());
 }
 
-function parseSolutionXml(solDir: string): SolutionInfo | null {
-  const xmlPath = join(EXTRACTED_DIR, solDir, "solution.xml");
-  if (!existsSync(xmlPath)) return null;
-  const xml = readFileSync(xmlPath, "utf-8");
+function solPath(solDir: string, ...parts: string[]): string {
+  return join(EXTRACTED_DIR, solDir, ...parts);
+}
+
+function readSolFile(solDir: string, ...parts: string[]): string | null {
+  const p = solPath(solDir, ...parts);
+  if (!existsSync(p)) return null;
+  return readFileSync(p, "utf-8");
+}
+
+function readSolJson(solDir: string, ...parts: string[]): any | null {
+  const content = readSolFile(solDir, ...parts);
+  if (!content) return null;
+  try { return JSON.parse(content); } catch { return null; }
+}
+
+function listSubDirs(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).filter((d) => statSync(join(dir, d)).isDirectory());
+}
+
+function listFiles(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).filter((f) => statSync(join(dir, f)).isFile());
+}
+
+// ── Solution Parsers ────────────────────────────────────────────────
+
+function parseSolutionXml(solDir: string) {
+  const xml = readSolFile(solDir, "solution.xml");
+  if (!xml) return null;
   const manifest = xmlTag(xml, "SolutionManifest");
+  const rootComponents = xmlTagSelfClosing(manifest, "RootComponent").map((rc) => {
+    const typeCode = parseInt(xmlAttr(rc, "type"), 10);
+    return {
+      type: typeCode,
+      typeName: COMPONENT_TYPES[typeCode] || `Unknown (${typeCode})`,
+      id: xmlAttr(rc, "id"),
+      schemaName: xmlAttr(rc, "schemaName"),
+      behavior: xmlAttr(rc, "behavior"),
+    };
+  });
   return {
     uniqueName: xmlTag(manifest, "UniqueName"),
-    displayName: xmlAttr(
-      (xmlTagAll(manifest, "LocalizedName").find((t) => t.includes('languagecode="1033"')) || ""),
-      "description"
-    ),
+    displayName: xmlAttr(xmlTagAll(manifest, "LocalizedName").find((t) => t.includes('languagecode="1033"')) || "", "description"),
     version: xmlTag(manifest, "Version"),
     managed: xmlTag(manifest, "Managed") === "1",
     publisher: {
       name: xmlTag(xmlTag(manifest, "Publisher"), "UniqueName"),
       prefix: xmlTag(xmlTag(manifest, "Publisher"), "CustomizationPrefix"),
-      description: xmlAttr(
-        (xmlTagAll(xmlTag(manifest, "Publisher"), "Description").find((t) =>
-          t.includes('languagecode="1033"')
-        ) || ""),
-        "description"
-      ),
+      description: xmlAttr(xmlTagAll(xmlTag(manifest, "Publisher"), "Description").find((t) => t.includes('languagecode="1033"')) || "", "description"),
     },
-    rootComponentCount: xmlTagSelfClosing(manifest, "RootComponent").length,
+    rootComponents,
+    rootComponentCount: rootComponents.length,
   };
 }
 
-function parseFlows(solDir: string): FlowInfo[] {
-  const custPath = join(EXTRACTED_DIR, solDir, "customizations.xml");
-  if (!existsSync(custPath)) return [];
-  const xml = readFileSync(custPath, "utf-8");
-  const workflows = xmlTagAll(xml, "Workflow");
-  return workflows.map((w) => ({
+function parseFlows(solDir: string) {
+  const xml = readSolFile(solDir, "customizations.xml");
+  if (!xml) return [];
+  return xmlTagAll(xml, "Workflow").map((w) => ({
     id: xmlAttr(w, "WorkflowId"),
     name: xmlAttr(w, "Name"),
-    description: xmlAttr(
-      (xmlTagAll(w, "Description").find((d) => d.includes('languagecode="1033"')) || ""),
-      "description"
-    ),
+    description: xmlAttr(xmlTagAll(w, "Description").find((d) => d.includes('languagecode="1033"')) || "", "description"),
     jsonFile: xmlTag(w, "JsonFileName"),
+    category: xmlTag(w, "Category"),
+    categoryName: ({ "0": "Classic Workflow", "2": "Business Rule", "4": "Business Process Flow", "5": "Cloud Flow", "6": "Desktop Flow" } as any)[xmlTag(w, "Category")] || "Other",
     state: xmlTag(w, "StateCode") === "1" ? "Active" : "Inactive",
+    type: xmlTag(w, "ModernFlowType") === "0" ? "Automated/Instant" : xmlTag(w, "ModernFlowType") === "1" ? "Scheduled" : "Other",
   }));
 }
 
-function getFlowDefinition(solDir: string, flowJsonFile: string): object | null {
-  const fpath = join(EXTRACTED_DIR, solDir, flowJsonFile.replace(/^\//, ""));
-  if (!existsSync(fpath)) return null;
-  return JSON.parse(readFileSync(fpath, "utf-8"));
+function getFlowDefinition(solDir: string, flowJsonFile: string) {
+  return readSolJson(solDir, flowJsonFile.replace(/^\//, ""));
 }
 
-function parseBotComponents(solDir: string): BotComponent[] {
-  const bcDir = join(EXTRACTED_DIR, solDir, "botcomponents");
+function describeFlow(flowDef: any) {
+  const def = flowDef?.properties?.definition;
+  if (!def) return { error: "No definition found" };
+  const triggers = Object.entries(def.triggers || {}).map(([name, t]: [string, any]) => ({
+    name, type: t.type,
+    ...(t.recurrence ? { recurrence: t.recurrence } : {}),
+    ...(t.inputs?.host?.operationId ? { operationId: t.inputs.host.operationId } : {}),
+    ...(t.inputs?.host?.connectionName ? { connector: t.inputs.host.connectionName } : {}),
+  }));
+  const actions = Object.entries(def.actions || {}).map(([name, a]: [string, any]) => ({
+    name, type: a.type,
+    ...(a.inputs?.host?.operationId ? { operationId: a.inputs.host.operationId } : {}),
+    ...(a.inputs?.host?.connectionName ? { connector: a.inputs.host.connectionName } : {}),
+    ...(a.inputs?.parameters?.["body/message"] ? { promptMessage: a.inputs.parameters["body/message"] } : {}),
+    ...(a.inputs?.parameters?.Copilot ? { targetCopilot: a.inputs.parameters.Copilot } : {}),
+    runsAfter: Object.keys(a.runAfter || {}),
+  }));
+  const connRefs = flowDef?.properties?.connectionReferences
+    ? Object.entries(flowDef.properties.connectionReferences).map(([key, cr]: [string, any]) => ({
+        name: key, api: cr.api?.name, connectionRef: cr.connection?.connectionReferenceLogicalName,
+      }))
+    : [];
+  return { triggers, actions, connectionReferences: connRefs };
+}
+
+function parseBotComponents(solDir: string) {
+  const bcDir = solPath(solDir, "botcomponents");
   if (!existsSync(bcDir)) return [];
-  const dirs = readdirSync(bcDir).filter((d) =>
-    statSync(join(bcDir, d)).isDirectory()
-  );
-  return dirs.map((folder) => {
-    let type: BotComponent["type"] = "unknown";
+  return listSubDirs(bcDir).map((folder) => {
+    let type = "unknown";
     let name = folder;
-    if (folder.includes(".topic.")) {
-      type = "topic";
-      name = folder.split(".topic.")[1] || folder;
-    } else if (folder.includes(".action.")) {
-      type = "action";
-      name = folder.split(".action.")[1] || folder;
-    } else if (folder.includes(".ExternalTriggerComponent.")) {
-      type = "trigger";
-      name = folder.split(".ExternalTriggerComponent.")[1]?.split(".")[0] || folder;
-    } else if (folder.includes(".gpt.")) {
-      type = "gpt";
-      name = "GPT / System Prompt";
-    }
-    return {
-      folder,
-      schemaName: folder,
-      type,
-      name,
-      hasData: existsSync(join(bcDir, folder, "data")),
-    };
+    if (folder.includes(".topic.")) { type = "topic"; name = folder.split(".topic.")[1] || folder; }
+    else if (folder.includes(".action.")) { type = "action"; name = folder.split(".action.")[1] || folder; }
+    else if (folder.includes(".ExternalTriggerComponent.")) { type = "trigger"; name = folder.split(".ExternalTriggerComponent.")[1]?.split(".")[0] || folder; }
+    else if (folder.includes(".gpt.")) { type = "gpt"; name = "GPT / System Prompt"; }
+    else if (folder.includes(".skill.")) { type = "skill"; name = folder.split(".skill.")[1] || folder; }
+    else if (folder.includes(".dialog.")) { type = "dialog"; name = folder.split(".dialog.")[1] || folder; }
+    else if (folder.includes(".entity.")) { type = "entity"; name = folder.split(".entity.")[1] || folder; }
+    else if (folder.includes(".variable.")) { type = "variable"; name = folder.split(".variable.")[1] || folder; }
+    return { folder, schemaName: folder, type, name, hasData: existsSync(join(bcDir, folder, "data")) };
   });
 }
 
 function getBotComponentData(solDir: string, folder: string): string | null {
-  const dataPath = join(EXTRACTED_DIR, solDir, "botcomponents", folder, "data");
-  if (!existsSync(dataPath)) return null;
-  return readFileSync(dataPath, "utf-8");
+  return readSolFile(solDir, "botcomponents", folder, "data");
 }
 
-function parseConnectors(solDir: string): ConnectorRef[] {
-  const custPath = join(EXTRACTED_DIR, solDir, "customizations.xml");
-  if (!existsSync(custPath)) return [];
-  const xml = readFileSync(custPath, "utf-8");
-  const refs = xmlTagAll(xml, "connectionreference");
-  return refs.map((r) => ({
+function parseConnectors(solDir: string) {
+  const xml = readSolFile(solDir, "customizations.xml");
+  if (!xml) return [];
+  return xmlTagAll(xml, "connectionreference").map((r) => ({
     logicalName: xmlAttr(r, "connectionreferencelogicalname"),
     connectorId: xmlTag(r, "connectorid"),
+    connector: xmlTag(r, "connectorid").split("/").pop() || "",
     displayName: xmlTag(r, "connectionreferencedisplayname"),
   }));
 }
 
-function parseBotConnectionRefs(solDir: string): Array<{ action: string; connector: string }> {
-  const assetPath = join(
-    EXTRACTED_DIR,
-    solDir,
-    "Assets",
-    "botcomponent_connectionreferenceset.xml"
-  );
-  if (!existsSync(assetPath)) return [];
-  const xml = readFileSync(assetPath, "utf-8");
-  const refs = xmlTagSelfClosing(xml, "botcomponent_connectionreference").concat(
-    xmlTagAll(xml, "botcomponent_connectionreference")
-  );
-  return refs.map((r) => ({
-    action: xmlAttr(r, "botcomponentid.schemaname"),
-    connector: xmlAttr(r, "connectionreferenceid.connectionreferencelogicalname"),
-  })).filter(r => r.action);
+function parseBotConnectionRefs(solDir: string) {
+  const xml = readSolFile(solDir, "Assets", "botcomponent_connectionreferenceset.xml");
+  if (!xml) return [];
+  const seen = new Set<string>();
+  return xmlTagBoth(xml, "botcomponent_connectionreference")
+    .map((r) => ({ action: xmlAttr(r, "botcomponentid.schemaname"), connector: xmlAttr(r, "connectionreferenceid.connectionreferencelogicalname") }))
+    .filter((r) => r.action && !seen.has(r.action) && seen.add(r.action));
 }
 
-// De-duplicate since xmlTagSelfClosing and xmlTagAll may overlap
-function uniqueByAction(arr: Array<{ action: string; connector: string }>) {
-  const seen = new Set<string>();
-  return arr.filter((r) => {
-    if (seen.has(r.action)) return false;
-    seen.add(r.action);
-    return true;
+// ── NEW: Parse Entities from customizations.xml ─────────────────────
+function parseEntities(solDir: string) {
+  const xml = readSolFile(solDir, "customizations.xml");
+  if (!xml) return [];
+  const entitiesBlock = xmlTag(xml, "Entities");
+  if (!entitiesBlock) return [];
+  return xmlTagAll(entitiesBlock, "Entity").map((e) => {
+    const name = xmlTag(e, "Name");
+    const localizedNames = xmlTagAll(e, "LocalizedName");
+    const displayName = xmlAttr(localizedNames.find((l) => l.includes('languagecode="1033"')) || "", "description") || name;
+    const forms = xmlTagAll(e, "systemform").length;
+    const views = xmlTagAll(e, "savedquery").length;
+    const charts = xmlTagAll(e, "savedqueryvisualization").length;
+    const hasRibbon = e.includes("<RibbonDiffXml>");
+    return { name, displayName, forms, views, charts, hasRibbon };
   });
 }
 
-// ── Summarize the entire solution in natural language ────────────────
+// ── NEW: Parse Security Roles ───────────────────────────────────────
+function parseRoles(solDir: string) {
+  const xml = readSolFile(solDir, "customizations.xml");
+  if (!xml) return [];
+  const rolesBlock = xmlTag(xml, "Roles");
+  if (!rolesBlock) return [];
+  return xmlTagAll(rolesBlock, "Role").map((r) => ({
+    id: xmlAttr(r, "id"),
+    name: xmlAttr(r, "name"),
+    privileges: xmlTagAll(r, "RolePrivilege").length,
+  }));
+}
+
+// ── NEW: Parse Web Resources ────────────────────────────────────────
+function parseWebResources(solDir: string) {
+  const wrDir = solPath(solDir, "WebResources");
+  if (!existsSync(wrDir)) return [];
+  const results: Array<{ path: string; type: string; size: number }> = [];
+  function walk(dir: string, prefix: string) {
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry);
+      const stat = statSync(full);
+      if (stat.isDirectory()) walk(full, `${prefix}${entry}/`);
+      else {
+        const ext = entry.split(".").pop()?.toLowerCase() || "";
+        const typeMap: Record<string, string> = {
+          html: "HTML", htm: "HTML", js: "JavaScript", css: "CSS",
+          png: "Image (PNG)", jpg: "Image (JPG)", jpeg: "Image (JPG)",
+          gif: "Image (GIF)", svg: "Image (SVG)", ico: "Icon",
+          xml: "XML", xsl: "XSL", resx: "RESX (Localization)",
+          xap: "Silverlight (legacy)",
+        };
+        results.push({ path: `${prefix}${entry}`, type: typeMap[ext] || ext.toUpperCase(), size: stat.size });
+      }
+    }
+  }
+  walk(wrDir, "");
+  return results;
+}
+
+// ── NEW: Parse Canvas Apps ──────────────────────────────────────────
+function parseCanvasApps(solDir: string) {
+  const caDir = solPath(solDir, "CanvasApps");
+  if (!existsSync(caDir)) return [];
+  return listFiles(caDir)
+    .filter((f) => f.toLowerCase().endsWith(".msapp"))
+    .map((f) => ({ file: f, size: statSync(join(caDir, f)).size }));
+}
+
+// ── NEW: Parse Environment Variables ────────────────────────────────
+function parseEnvironmentVariables(solDir: string) {
+  const evDir = solPath(solDir, "environmentvariabledefinitions");
+  if (!existsSync(evDir)) return [];
+  return listSubDirs(evDir).map((folder) => {
+    const defXml = readSolFile(solDir, "environmentvariabledefinitions", folder, "environmentvariabledefinition.xml");
+    const valJson = readSolJson(solDir, "environmentvariabledefinitions", folder, "environmentvariablevalues.json");
+    let displayName = folder;
+    let type = "unknown";
+    let defaultValue = "";
+    if (defXml) {
+      displayName = xmlTag(defXml, "displayname") || xmlAttr(defXml, "schemaname") || folder;
+      const typeCode = xmlTag(defXml, "type");
+      type = ({ "100000000": "String", "100000001": "Number", "100000002": "Boolean", "100000003": "JSON", "100000004": "Data Source", "100000005": "Secret" } as any)[typeCode] || typeCode;
+      defaultValue = xmlTag(defXml, "defaultvalue") || "";
+    }
+    return { schemaName: folder, displayName, type, defaultValue, hasValue: !!valJson };
+  });
+}
+
+// ── NEW: Parse Custom Connectors ────────────────────────────────────
+function parseCustomConnectors(solDir: string) {
+  for (const dirName of ["Connectors", "connectors"]) {
+    const ccDir = solPath(solDir, dirName);
+    if (!existsSync(ccDir)) continue;
+    return listSubDirs(ccDir).map((folder) => {
+      const swagger = readSolJson(solDir, dirName, folder, "apiDefinition.swagger.json");
+      const props = readSolJson(solDir, dirName, folder, "apiProperties.json");
+      return {
+        folder,
+        title: swagger?.info?.title || folder,
+        description: swagger?.info?.description || "",
+        host: swagger?.host || "",
+        basePath: swagger?.basePath || "",
+        operationCount: swagger?.paths ? Object.keys(swagger.paths).length : 0,
+        authType: props?.properties?.connectionParameters ? Object.keys(props.properties.connectionParameters).join(", ") : "none",
+        hasIcon: existsSync(join(ccDir, folder, "icon.png")),
+      };
+    });
+  }
+  return [];
+}
+
+// ── NEW: Parse Plugin Assemblies ────────────────────────────────────
+function parsePluginAssemblies(solDir: string) {
+  const paDir = solPath(solDir, "PluginAssemblies");
+  if (!existsSync(paDir)) return [];
+  return listSubDirs(paDir).map((folder) => {
+    const dlls = listFiles(join(paDir, folder)).filter((f) => f.endsWith(".dll"));
+    return { folder, assemblies: dlls };
+  });
+}
+
+// ── NEW: Parse App Modules (Model-Driven Apps) ──────────────────────
+function parseAppModules(solDir: string) {
+  const xml = readSolFile(solDir, "customizations.xml");
+  if (!xml) return [];
+  return xmlTagAll(xml, "AppModule").map((am) => ({
+    uniqueName: xmlTag(am, "UniqueName"),
+    name: xmlAttr(xmlTagAll(am, "LocalizedName").find((l) => l.includes('languagecode="1033"')) || "", "description") || xmlTag(am, "UniqueName"),
+    componentCount: xmlTagAll(am, "AppModuleComponent").length,
+  }));
+}
+
+// ── NEW: Parse Option Sets (Choices) ────────────────────────────────
+function parseOptionSets(solDir: string) {
+  const xml = readSolFile(solDir, "customizations.xml");
+  if (!xml) return [];
+  const osBlock = xmlTag(xml, "optionsets") || xmlTag(xml, "OptionSets");
+  if (!osBlock) return [];
+  return xmlTagAll(osBlock, "optionset").map((os) => {
+    const name = xmlAttr(os, "Name") || xmlTag(os, "Name");
+    const displayName = xmlAttr(xmlTagAll(os, "displayname").find((l) => l.includes('languagecode="1033"')) || "", "description") || name;
+    const options = xmlTagAll(os, "option").map((o) => ({
+      value: xmlAttr(o, "value"),
+      label: xmlAttr(xmlTagAll(o, "label").find((l) => l.includes('languagecode="1033"')) || "", "description"),
+    }));
+    return { name, displayName, optionCount: options.length, options };
+  });
+}
+
+// ── NEW: Parse SiteMap ──────────────────────────────────────────────
+function parseSiteMap(solDir: string) {
+  const xml = readSolFile(solDir, "customizations.xml");
+  if (!xml) return null;
+  const sm = xmlTag(xml, "SiteMap");
+  if (!sm) return null;
+  const areas = xmlTagAll(sm, "Area").map((a) => ({
+    id: xmlAttr(a, "Id"),
+    title: xmlAttr(a, "Title") || xmlAttr(a, "ResourceId"),
+    groups: xmlTagAll(a, "Group").map((g) => ({
+      id: xmlAttr(g, "Id"),
+      title: xmlAttr(g, "Title") || xmlAttr(g, "ResourceId"),
+      subAreas: xmlTagAll(g, "SubArea").map((sa) => ({
+        id: xmlAttr(sa, "Id"),
+        entity: xmlAttr(sa, "Entity"),
+        url: xmlAttr(sa, "Url"),
+      })),
+    })),
+  }));
+  return { areas };
+}
+
+// ── NEW: Detect all present folder types ────────────────────────────
+function detectFolders(solDir: string) {
+  const base = solPath(solDir);
+  if (!existsSync(base)) return [];
+  const known: Record<string, string> = {
+    Workflows: "Power Automate Flows", botcomponents: "Copilot Studio Bot Components",
+    bots: "Bot Definitions", Assets: "Bot Assets (connection refs, workflow sets)",
+    WebResources: "Web Resources (HTML, JS, CSS, images)",
+    PluginAssemblies: "Plugin Assemblies (DLLs)", pluginpackages: "Plugin Packages (NuGet)",
+    Entities: "Entity/Table Definitions", Roles: "Security Roles",
+    CanvasApps: "Canvas Apps (.msapp)", AppModules: "Model-Driven App Definitions",
+    AppModuleSiteMaps: "Model-Driven App Sitemaps",
+    Connectors: "Custom Connectors", connectors: "Custom Connectors",
+    environmentvariabledefinitions: "Environment Variable Definitions",
+    environmentvariablevalues: "Environment Variable Values",
+    Controls: "PCF Custom Controls", OptionSets: "Global Option Sets (Choices)",
+    Reports: "SSRS Reports", Templates: "Email/KB/Contract Templates",
+    connectionreferences: "Connection References",
+    customapis: "Custom APIs", customapirequestparameters: "Custom API Request Params",
+    customapiresponseproperty: "Custom API Response Properties",
+    aiplugins: "AI Plugins", aipluginoperations: "AI Plugin Operations",
+    aimodels: "AI Builder Models", aibuilderfeedbackloop: "AI Builder Feedback Loop",
+    DuplicateRules: "Duplicate Detection Rules", FieldSecurityProfiles: "Field Security Profiles",
+    ServiceEndpoints: "Service Endpoints (Webhooks)",
+    SdkMessageProcessingSteps: "SDK Message Processing Steps",
+    EntityRelationships: "N:N Relationships", ConnectionRoles: "Connection Roles",
+  };
+  const entries = readdirSync(base);
+  const folders = entries.filter((e) => statSync(join(base, e)).isDirectory());
+  const files = entries.filter((e) => statSync(join(base, e)).isFile());
+  return {
+    folders: folders.map((f) => ({ name: f, description: known[f] || "Unknown component folder" })),
+    rootFiles: files,
+  };
+}
+
+// ── Comprehensive Summary ───────────────────────────────────────────
 function summarizeSolution(solDir: string): string {
   const info = parseSolutionXml(solDir);
   if (!info) return "Solution not found.";
   const flows = parseFlows(solDir);
   const components = parseBotComponents(solDir);
   const connectors = parseConnectors(solDir);
+  const entities = parseEntities(solDir);
+  const roles = parseRoles(solDir);
+  const webResources = parseWebResources(solDir);
+  const canvasApps = parseCanvasApps(solDir);
+  const envVars = parseEnvironmentVariables(solDir);
+  const customConnectors = parseCustomConnectors(solDir);
+  const plugins = parsePluginAssemblies(solDir);
+  const appModules = parseAppModules(solDir);
+  const optionSets = parseOptionSets(solDir);
+  const siteMap = parseSiteMap(solDir);
+  const structure = detectFolders(solDir);
+
   const topics = components.filter((c) => c.type === "topic");
   const actions = components.filter((c) => c.type === "action");
   const triggers = components.filter((c) => c.type === "trigger");
@@ -269,365 +486,274 @@ function summarizeSolution(solDir: string): string {
   if (gpt) {
     const data = getBotComponentData(solDir, gpt.folder);
     if (data) {
-      const instrMatch = data.match(/instructions:\s*\|?\-?\s*\n([\s\S]*?)(?=\n\w+:|$)/);
-      if (instrMatch) systemPrompt = instrMatch[1].trim();
+      const m = data.match(/instructions:\s*\|?\-?\s*\n([\s\S]*?)(?=\n\w+:|$)/);
+      if (m) systemPrompt = m[1].trim();
     }
   }
 
-  const lines: string[] = [];
-  lines.push(`# ${info.displayName || info.uniqueName}`);
-  lines.push(`**Version:** ${info.version} | **Managed:** ${info.managed ? "Yes" : "No"} | **Publisher:** ${info.publisher.name} (prefix: ${info.publisher.prefix})`);
-  if (info.publisher.description) lines.push(`**Publisher Info:** ${info.publisher.description}`);
-  lines.push("");
-  lines.push(`## Components Overview`);
-  lines.push(`- **Power Automate Flows:** ${flows.length} (${flows.map((f) => f.name).join(", ")})`);
-  lines.push(`- **Bot Topics:** ${topics.length} (${topics.map((t) => t.name).join(", ")})`);
-  lines.push(`- **Bot Actions:** ${actions.length} (${actions.map((a) => a.name).join(", ")})`);
-  lines.push(`- **External Triggers:** ${triggers.length} (${triggers.map((t) => t.name).join(", ")})`);
-  lines.push(`- **Connectors:** ${connectors.length} (${[...new Set(connectors.map((c) => c.connectorId.split("/").pop()))].join(", ")})`);
-  lines.push("");
+  const L: string[] = [];
+  L.push(`# ${info.displayName || info.uniqueName}`);
+  L.push(`**Version:** ${info.version} | **Managed:** ${info.managed ? "Yes" : "No"} | **Publisher:** ${info.publisher.name} (prefix: ${info.publisher.prefix})`);
+  if (info.publisher.description) L.push(`**Publisher Info:** ${info.publisher.description}`);
+  L.push("");
+
+  // Root component type breakdown
+  const typeCounts = new Map<string, number>();
+  for (const rc of info.rootComponents) typeCounts.set(rc.typeName, (typeCounts.get(rc.typeName) || 0) + 1);
+  if (typeCounts.size) {
+    L.push(`## Root Components (${info.rootComponentCount} total)`);
+    for (const [t, c] of typeCounts) L.push(`- **${t}:** ${c}`);
+    L.push("");
+  }
+
+  L.push(`## Solution Contents`);
+  if (flows.length) L.push(`- **Power Automate Flows:** ${flows.length} (${flows.map((f) => `${f.name} [${f.categoryName}]`).join(", ")})`);
+  if (topics.length) L.push(`- **Bot Topics:** ${topics.length} (${topics.map((t) => t.name).join(", ")})`);
+  if (actions.length) L.push(`- **Bot Actions:** ${actions.length} (${actions.map((a) => a.name).join(", ")})`);
+  if (triggers.length) L.push(`- **External Triggers:** ${triggers.length} (${triggers.map((t) => t.name).join(", ")})`);
+  if (connectors.length) L.push(`- **Connection References:** ${connectors.length} (${[...new Set(connectors.map((c) => c.connector))].join(", ")})`);
+  if (entities.length) L.push(`- **Entities/Tables:** ${entities.length} (${entities.map((e) => e.displayName).join(", ")})`);
+  if (roles.length) L.push(`- **Security Roles:** ${roles.length} (${roles.map((r) => r.name).join(", ")})`);
+  if (webResources.length) L.push(`- **Web Resources:** ${webResources.length} files`);
+  if (canvasApps.length) L.push(`- **Canvas Apps:** ${canvasApps.length} (${canvasApps.map((a) => a.file).join(", ")})`);
+  if (envVars.length) L.push(`- **Environment Variables:** ${envVars.length} (${envVars.map((v) => `${v.displayName} [${v.type}]`).join(", ")})`);
+  if (customConnectors.length) L.push(`- **Custom Connectors:** ${customConnectors.length} (${customConnectors.map((c) => c.title).join(", ")})`);
+  if (plugins.length) L.push(`- **Plugin Assemblies:** ${plugins.length}`);
+  if (appModules.length) L.push(`- **Model-Driven Apps:** ${appModules.length} (${appModules.map((a) => a.name).join(", ")})`);
+  if (optionSets.length) L.push(`- **Global Option Sets:** ${optionSets.length}`);
+  if (siteMap) L.push(`- **SiteMap:** ${siteMap.areas.length} areas`);
+  L.push("");
 
   if (systemPrompt) {
-    lines.push(`## Agent System Prompt (excerpt)`);
-    lines.push(systemPrompt.substring(0, 1500) + (systemPrompt.length > 1500 ? "\n..." : ""));
-    lines.push("");
+    L.push(`## Agent System Prompt (excerpt)`);
+    L.push(systemPrompt.substring(0, 2000) + (systemPrompt.length > 2000 ? "\n..." : ""));
+    L.push("");
   }
 
-  lines.push(`## Flow Details`);
-  for (const f of flows) {
-    lines.push(`- **${f.name}** [${f.state}]: ${f.description}`);
+  if (flows.length) {
+    L.push(`## Flow Details`);
+    for (const f of flows) L.push(`- **${f.name}** [${f.categoryName}, ${f.state}]: ${f.description}`);
+    L.push("");
   }
 
-  return lines.join("\n");
-}
+  if (typeof structure === "object" && "folders" in structure) {
+    L.push(`## Solution File Structure`);
+    for (const f of structure.folders) L.push(`- 📁 \`${f.name}/\` — ${f.description}`);
+    L.push(`- Root files: ${structure.rootFiles.join(", ")}`);
+  }
 
-// ── Flow detail extractor ───────────────────────────────────────────
-function describeFlow(flowDef: any): object {
-  const def = flowDef?.properties?.definition;
-  if (!def) return { error: "No definition found" };
-
-  const triggers = Object.entries(def.triggers || {}).map(([name, t]: [string, any]) => ({
-    name,
-    type: t.type,
-    ...(t.recurrence ? { recurrence: t.recurrence } : {}),
-    ...(t.inputs?.host?.operationId ? { operationId: t.inputs.host.operationId } : {}),
-  }));
-
-  const actions = Object.entries(def.actions || {}).map(([name, a]: [string, any]) => ({
-    name,
-    type: a.type,
-    ...(a.inputs?.host?.operationId ? { operationId: a.inputs.host.operationId } : {}),
-    ...(a.inputs?.host?.connectionName ? { connector: a.inputs.host.connectionName } : {}),
-    ...(a.inputs?.parameters?.["body/message"] ? { promptMessage: a.inputs.parameters["body/message"] } : {}),
-    ...(a.inputs?.parameters?.Copilot ? { targetCopilot: a.inputs.parameters.Copilot } : {}),
-    runsAfter: Object.keys(a.runAfter || {}),
-  }));
-
-  const connRefs = flowDef?.properties?.connectionReferences
-    ? Object.entries(flowDef.properties.connectionReferences).map(([key, cr]: [string, any]) => ({
-        name: key,
-        api: cr.api?.name,
-        connectionRef: cr.connection?.connectionReferenceLogicalName,
-      }))
-    : [];
-
-  return { triggers, actions, connectionReferences: connRefs };
+  return L.join("\n");
 }
 
 // ── MCP Server Factory ──────────────────────────────────────────────
-
 function createMcpServer(): McpServer {
-  const server = new McpServer({
-    name: "Power Platform Solution Explorer",
-    version: "1.0.0",
-  });
+  const server = new McpServer({ name: "Power Platform Solution Explorer", version: "2.0.0" });
+  const solParam = { solution: z.string().describe("Solution folder name (e.g. DEMOPersonalAssistant)") };
 
-  // ── Tool: list_solutions ──────────────────────────────────────────
-  server.tool(
-    "list_solutions",
-    "List all extracted Power Platform solutions available for exploration",
-    {},
+  // 1. list_solutions
+  server.tool("list_solutions", "List all extracted Power Platform solutions available for exploration", {},
     async () => {
-      const dirs = listSolutionDirs();
-      const solutions = dirs
-        .map((d) => {
-          const info = parseSolutionXml(d);
-          return info
-            ? { folder: d, name: info.displayName || info.uniqueName, version: info.version, managed: info.managed, publisher: info.publisher.name }
-            : null;
-        })
-        .filter(Boolean);
-      return {
-        content: [{ type: "text", text: JSON.stringify(solutions, null, 2) }],
-      };
-    }
-  );
+      const solutions = listSolutionDirs().map((d) => {
+        const info = parseSolutionXml(d);
+        return info ? { folder: d, name: info.displayName || info.uniqueName, version: info.version, managed: info.managed, publisher: info.publisher.name } : null;
+      }).filter(Boolean);
+      return { content: [{ type: "text", text: JSON.stringify(solutions, null, 2) }] };
+    });
 
-  // ── Tool: get_solution_info ───────────────────────────────────────
-  server.tool(
-    "get_solution_info",
-    "Get metadata about a Power Platform solution (name, version, publisher, component counts)",
-    { solution: z.string().describe("Solution folder name (e.g. DEMOPersonalAssistant)") },
+  // 2. get_solution_info
+  server.tool("get_solution_info", "Get detailed metadata about a solution including root component breakdown with type codes", solParam,
     async ({ solution }) => {
       const info = parseSolutionXml(solution);
       if (!info) return { content: [{ type: "text", text: "Solution not found." }] };
       return { content: [{ type: "text", text: JSON.stringify(info, null, 2) }] };
-    }
-  );
+    });
 
-  // ── Tool: describe_solution ───────────────────────────────────────
-  server.tool(
-    "describe_solution",
-    "Get a comprehensive natural-language summary of what a Power Platform solution contains and does — great for answering 'what does this solution do?' or 'how can this agent help me?'",
-    { solution: z.string().describe("Solution folder name") },
+  // 3. describe_solution
+  server.tool("describe_solution", "Get a comprehensive natural-language summary of everything in the solution — components, flows, agents, connectors, entities, web resources, and more", solParam,
+    async ({ solution }) => ({ content: [{ type: "text", text: summarizeSolution(solution) }] }));
+
+  // 4. get_solution_structure
+  server.tool("get_solution_structure", "Show the folder structure and root files of the extracted solution — reveals what component types are present", solParam,
     async ({ solution }) => {
-      const summary = summarizeSolution(solution);
-      return { content: [{ type: "text", text: summary }] };
-    }
-  );
+      const structure = detectFolders(solution);
+      return { content: [{ type: "text", text: JSON.stringify(structure, null, 2) }] };
+    });
 
-  // ── Tool: list_flows ──────────────────────────────────────────────
-  server.tool(
-    "list_flows",
-    "List all Power Automate flows in the solution with their name, description, and status",
-    { solution: z.string().describe("Solution folder name") },
-    async ({ solution }) => {
-      const flows = parseFlows(solution);
-      return { content: [{ type: "text", text: JSON.stringify(flows, null, 2) }] };
-    }
-  );
+  // 5. list_flows
+  server.tool("list_flows", "List all Power Automate flows with name, category (Cloud Flow, Business Rule, BPF), status, and trigger type", solParam,
+    async ({ solution }) => ({ content: [{ type: "text", text: JSON.stringify(parseFlows(solution), null, 2) }] }));
 
-  // ── Tool: get_flow_details ────────────────────────────────────────
-  server.tool(
-    "get_flow_details",
-    "Get detailed trigger, action, and connector info for a specific Power Automate flow",
-    {
-      solution: z.string().describe("Solution folder name"),
-      flow_name: z.string().describe("Flow name (as returned by list_flows)"),
-    },
+  // 6. get_flow_details
+  server.tool("get_flow_details", "Deep dive into a specific flow — triggers, actions, connectors, prompts, and execution order",
+    { ...solParam, flow_name: z.string().describe("Flow name (as returned by list_flows)") },
     async ({ solution, flow_name }) => {
       const flows = parseFlows(solution);
-      const flow = flows.find(
-        (f) => f.name.toLowerCase() === flow_name.toLowerCase()
-      );
+      const flow = flows.find((f) => f.name.toLowerCase() === flow_name.toLowerCase());
       if (!flow) return { content: [{ type: "text", text: `Flow "${flow_name}" not found. Available: ${flows.map((f) => f.name).join(", ")}` }] };
-
       const def = getFlowDefinition(solution, flow.jsonFile);
-      if (!def) return { content: [{ type: "text", text: "Flow JSON definition not found." }] };
+      if (!def) return { content: [{ type: "text", text: "Flow JSON not found." }] };
+      return { content: [{ type: "text", text: JSON.stringify({ ...flow, details: describeFlow(def) }, null, 2) }] };
+    });
 
-      const details = describeFlow(def);
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({ ...flow, details }, null, 2),
-          },
-        ],
-      };
-    }
-  );
+  // 7. list_bot_topics
+  server.tool("list_bot_topics", "List all Copilot Studio conversation topics (ConversationStart, Greeting, Fallback, custom topics, etc.)", solParam,
+    async ({ solution }) => ({ content: [{ type: "text", text: JSON.stringify(parseBotComponents(solution).filter((c) => c.type === "topic"), null, 2) }] }));
 
-  // ── Tool: list_bot_topics ─────────────────────────────────────────
-  server.tool(
-    "list_bot_topics",
-    "List all conversation topics defined in the Copilot Studio agent",
-    { solution: z.string().describe("Solution folder name") },
+  // 8. list_bot_actions
+  server.tool("list_bot_actions", "List all Copilot Studio actions with their connector mappings — connector operations, MCP servers, custom actions", solParam,
     async ({ solution }) => {
-      const components = parseBotComponents(solution).filter(
-        (c) => c.type === "topic"
-      );
-      return { content: [{ type: "text", text: JSON.stringify(components, null, 2) }] };
-    }
-  );
-
-  // ── Tool: list_bot_actions ────────────────────────────────────────
-  server.tool(
-    "list_bot_actions",
-    "List all actions (connector operations, MCP servers) available to the Copilot Studio agent",
-    { solution: z.string().describe("Solution folder name") },
-    async ({ solution }) => {
-      const components = parseBotComponents(solution).filter(
-        (c) => c.type === "action"
-      );
-      // Enrich with connector mapping
-      const botRefs = uniqueByAction(parseBotConnectionRefs(solution));
-      const enriched = components.map((c) => {
+      const actions = parseBotComponents(solution).filter((c) => c.type === "action");
+      const botRefs = parseBotConnectionRefs(solution);
+      const enriched = actions.map((c) => {
         const ref = botRefs.find((r) => r.action === c.schemaName);
         return { ...c, connectorRef: ref?.connector || "N/A" };
       });
       return { content: [{ type: "text", text: JSON.stringify(enriched, null, 2) }] };
-    }
-  );
+    });
 
-  // ── Tool: get_agent_system_prompt ─────────────────────────────────
-  server.tool(
-    "get_agent_system_prompt",
-    "Get the full system prompt / instructions configured for the Copilot Studio agent",
-    { solution: z.string().describe("Solution folder name") },
+  // 9. get_agent_system_prompt
+  server.tool("get_agent_system_prompt", "Get the full system prompt / instructions / persona configured for the Copilot Studio agent", solParam,
     async ({ solution }) => {
       const gpt = parseBotComponents(solution).find((c) => c.type === "gpt");
       if (!gpt) return { content: [{ type: "text", text: "No GPT/system prompt component found." }] };
-      const data = getBotComponentData(solution, gpt.folder);
-      return { content: [{ type: "text", text: data || "No data file found." }] };
-    }
-  );
+      return { content: [{ type: "text", text: getBotComponentData(solution, gpt.folder) || "No data." }] };
+    });
 
-  // ── Tool: list_connectors ─────────────────────────────────────────
-  server.tool(
-    "list_connectors",
-    "List all connection references (connectors) used by the solution — Office 365, Outlook, Planner, etc.",
-    { solution: z.string().describe("Solution folder name") },
-    async ({ solution }) => {
-      const connectors = parseConnectors(solution);
-      // Simplify connector IDs
-      const simplified = connectors.map((c) => ({
-        ...c,
-        connector: c.connectorId.split("/").pop(),
-      }));
-      return { content: [{ type: "text", text: JSON.stringify(simplified, null, 2) }] };
-    }
-  );
+  // 10. list_connectors
+  server.tool("list_connectors", "List all connection references — Office 365, Outlook, Planner, Copilot Studio, custom connectors, etc.", solParam,
+    async ({ solution }) => ({ content: [{ type: "text", text: JSON.stringify(parseConnectors(solution), null, 2) }] }));
 
-  // ── Tool: get_component_data ──────────────────────────────────────
-  server.tool(
-    "get_component_data",
-    "Get the raw YAML/JSON data for any bot component (topic, action, trigger, GPT config) by its folder name",
-    {
-      solution: z.string().describe("Solution folder name"),
-      component: z.string().describe("Component folder name (from list_bot_topics, list_bot_actions, etc.)"),
-    },
+  // 11. get_component_data
+  server.tool("get_component_data", "Get the raw YAML/JSON data for any bot component by its folder name",
+    { ...solParam, component: z.string().describe("Component folder name") },
     async ({ solution, component }) => {
       const data = getBotComponentData(solution, component);
-      if (!data) return { content: [{ type: "text", text: `Component "${component}" not found or has no data file.` }] };
+      if (!data) return { content: [{ type: "text", text: `Component "${component}" not found.` }] };
       return { content: [{ type: "text", text: data }] };
-    }
-  );
+    });
 
-  // ── Tool: list_external_triggers ──────────────────────────────────
-  server.tool(
-    "list_external_triggers",
-    "List all external triggers (Power Automate flow triggers that invoke the Copilot Studio agent)",
-    { solution: z.string().describe("Solution folder name") },
+  // 12. list_external_triggers
+  server.tool("list_external_triggers", "List all external triggers (Power Automate flows that invoke the agent)", solParam,
     async ({ solution }) => {
-      const triggers = parseBotComponents(solution).filter(
-        (c) => c.type === "trigger"
-      );
-      // Get trigger data for each
-      const enriched = triggers.map((t) => {
-        const data = getBotComponentData(solution, t.folder);
-        return { ...t, data: data?.substring(0, 500) || "N/A" };
-      });
+      const triggers = parseBotComponents(solution).filter((c) => c.type === "trigger");
+      const enriched = triggers.map((t) => ({ ...t, data: getBotComponentData(solution, t.folder)?.substring(0, 500) || "N/A" }));
       return { content: [{ type: "text", text: JSON.stringify(enriched, null, 2) }] };
-    }
-  );
+    });
 
-  // ── Tool: search_solution ─────────────────────────────────────────
-  server.tool(
-    "search_solution",
-    "Search across all solution files (flows, topics, actions, prompts) for a keyword",
-    {
-      solution: z.string().describe("Solution folder name"),
-      query: z.string().describe("Search keyword or phrase"),
-    },
+  // 13. list_entities
+  server.tool("list_entities", "List all Dataverse entities/tables in the solution with their forms, views, and charts count", solParam,
+    async ({ solution }) => ({ content: [{ type: "text", text: JSON.stringify(parseEntities(solution), null, 2) }] }));
+
+  // 14. list_security_roles
+  server.tool("list_security_roles", "List all security roles defined in the solution with privilege counts", solParam,
+    async ({ solution }) => ({ content: [{ type: "text", text: JSON.stringify(parseRoles(solution), null, 2) }] }));
+
+  // 15. list_web_resources
+  server.tool("list_web_resources", "List all web resources (HTML, JS, CSS, images, SVG, RESX) with file types and sizes", solParam,
+    async ({ solution }) => ({ content: [{ type: "text", text: JSON.stringify(parseWebResources(solution), null, 2) }] }));
+
+  // 16. list_canvas_apps
+  server.tool("list_canvas_apps", "List all Canvas Apps (.msapp files) in the solution", solParam,
+    async ({ solution }) => ({ content: [{ type: "text", text: JSON.stringify(parseCanvasApps(solution), null, 2) }] }));
+
+  // 17. list_environment_variables
+  server.tool("list_environment_variables", "List all environment variables with their type (String, Number, Boolean, JSON, Secret, Data Source) and default values", solParam,
+    async ({ solution }) => ({ content: [{ type: "text", text: JSON.stringify(parseEnvironmentVariables(solution), null, 2) }] }));
+
+  // 18. list_custom_connectors
+  server.tool("list_custom_connectors", "List all custom connectors with their OpenAPI definition, host, auth type, and operation count", solParam,
+    async ({ solution }) => ({ content: [{ type: "text", text: JSON.stringify(parseCustomConnectors(solution), null, 2) }] }));
+
+  // 19. list_plugin_assemblies
+  server.tool("list_plugin_assemblies", "List all plugin assemblies (DLLs) included in the solution", solParam,
+    async ({ solution }) => ({ content: [{ type: "text", text: JSON.stringify(parsePluginAssemblies(solution), null, 2) }] }));
+
+  // 20. list_app_modules
+  server.tool("list_app_modules", "List all model-driven apps defined in the solution", solParam,
+    async ({ solution }) => ({ content: [{ type: "text", text: JSON.stringify(parseAppModules(solution), null, 2) }] }));
+
+  // 21. list_option_sets
+  server.tool("list_option_sets", "List all global option sets (choices) with their options/values", solParam,
+    async ({ solution }) => ({ content: [{ type: "text", text: JSON.stringify(parseOptionSets(solution), null, 2) }] }));
+
+  // 22. get_sitemap
+  server.tool("get_sitemap", "Get the sitemap navigation structure (areas, groups, sub-areas) for model-driven apps", solParam,
+    async ({ solution }) => {
+      const sm = parseSiteMap(solution);
+      if (!sm) return { content: [{ type: "text", text: "No sitemap found." }] };
+      return { content: [{ type: "text", text: JSON.stringify(sm, null, 2) }] };
+    });
+
+  // 23. search_solution
+  server.tool("search_solution", "Full-text search across all solution files (flows, topics, actions, prompts, XML, JSON) for a keyword",
+    { ...solParam, query: z.string().describe("Search keyword or phrase") },
     async ({ solution, query }) => {
-      const solPath = join(EXTRACTED_DIR, solution);
-      if (!existsSync(solPath))
-        return { content: [{ type: "text", text: "Solution not found." }] };
-
+      const sp = solPath(solution);
+      if (!existsSync(sp)) return { content: [{ type: "text", text: "Solution not found." }] };
       const results: Array<{ file: string; matches: string[] }> = [];
       const q = query.toLowerCase();
-
-      function searchDir(dir: string) {
+      function walk(dir: string) {
         for (const entry of readdirSync(dir)) {
           const full = join(dir, entry);
           const stat = statSync(full);
-          if (stat.isDirectory()) {
-            searchDir(full);
-          } else if (stat.isFile() && stat.size < 500_000) {
+          if (stat.isDirectory()) walk(full);
+          else if (stat.isFile() && stat.size < 500_000) {
             try {
               const content = readFileSync(full, "utf-8");
               if (content.toLowerCase().includes(q)) {
-                const lines = content.split("\n");
-                const matchingLines = lines
-                  .filter((l) => l.toLowerCase().includes(q))
-                  .slice(0, 5)
-                  .map((l) => l.trim().substring(0, 200));
                 results.push({
-                  file: full.replace(solPath, "").replace(/\\/g, "/"),
-                  matches: matchingLines,
+                  file: full.replace(sp, "").replace(/\\/g, "/"),
+                  matches: content.split("\n").filter((l) => l.toLowerCase().includes(q)).slice(0, 5).map((l) => l.trim().substring(0, 200)),
                 });
               }
             } catch {}
           }
         }
       }
+      walk(sp);
+      return { content: [{ type: "text", text: results.length ? JSON.stringify(results, null, 2) : `No matches for "${query}".` }] };
+    });
 
-      searchDir(solPath);
-      return {
-        content: [
-          {
-            type: "text",
-            text: results.length
-              ? JSON.stringify(results, null, 2)
-              : `No matches found for "${query}".`,
-          },
-        ],
-      };
-    }
-  );
+  // 24. get_raw_file
+  server.tool("get_raw_file", "Read any raw file from the extracted solution by relative path",
+    { ...solParam, file_path: z.string().describe("Relative path within the solution (e.g. solution.xml, Workflows/MyFlow.json)") },
+    async ({ solution, file_path }) => {
+      const content = readSolFile(solution, ...file_path.split(/[\/\\]/));
+      if (!content) return { content: [{ type: "text", text: `File not found: ${file_path}` }] };
+      return { content: [{ type: "text", text: content.substring(0, 50000) }] };
+    });
 
   return server;
 }
 
-// ── HTTP Server (Streamable HTTP, stateless, factory pattern) ───────
-
+// ── HTTP Server ─────────────────────────────────────────────────────
 const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
-  // CORS
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "*");
+  if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
 
-  if (req.method === "OPTIONS") {
-    res.writeHead(204);
-    res.end();
-    return;
-  }
-
-  // Health check
   if (req.url === "/" || req.url === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(
-      JSON.stringify({
-        status: "ok",
-        server: "Power Platform Solution Explorer MCP",
-        solutions: listSolutionDirs(),
-      })
-    );
+    res.end(JSON.stringify({ status: "ok", server: "Power Platform Solution Explorer MCP", version: "2.0.0", tools: 24, solutions: listSolutionDirs() }));
     return;
   }
 
-  // MCP endpoint
   if (req.url === "/mcp") {
     if (req.method === "GET" || req.method === "DELETE") {
       res.writeHead(405, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Method not allowed. Use POST." }));
       return;
     }
-
     if (req.method === "POST") {
       try {
         const mcpServer = createMcpServer();
-        const transport = new StreamableHTTPServerTransport({
-          sessionIdGenerator: undefined,
-        });
+        const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
         await mcpServer.connect(transport);
         await transport.handleRequest(req, res);
       } catch (err: any) {
         console.error("MCP error:", err);
-        if (!res.headersSent) {
-          res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: err.message }));
-        }
+        if (!res.headersSent) { res.writeHead(500, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: err.message })); }
       }
       return;
     }
@@ -637,20 +763,19 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
   res.end(JSON.stringify({ error: "Not found" }));
 });
 
-// ── Auto-extract on startup, then listen ────────────────────────────
-console.log(`\n  Power Platform Solution Explorer MCP Server`);
-console.log(`  ──────────────────────────────────────────`);
+// ── Startup ─────────────────────────────────────────────────────────
+console.log(`\n  Power Platform Solution Explorer MCP Server v2.0`);
+console.log(`  ─────────────────────────────────────────────────`);
 console.log(`  ZIP drop folder: ${SOLUTIONS_DIR}`);
 console.log(`  Extracted to:    ${EXTRACTED_DIR}`);
 
 const newlyExtracted = autoExtractZips();
-if (newlyExtracted.length) {
-  console.log(`  New extractions: ${newlyExtracted.join(", ")}`);
-}
+if (newlyExtracted.length) console.log(`  New extractions: ${newlyExtracted.join(", ")}`);
 
 httpServer.listen(PORT, () => {
   console.log(`  MCP endpoint:    http://localhost:${PORT}/mcp`);
   console.log(`  Health check:    http://localhost:${PORT}/health`);
+  console.log(`  Tools:           24`);
   console.log(`  Solutions:       ${listSolutionDirs().join(", ") || "none"}`);
   console.log(`\n  Drop .zip files into ${SOLUTIONS_DIR} and restart.\n`);
 });

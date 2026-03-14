@@ -228,6 +228,11 @@ function parseBotComponents(solDir: string) {
     else if (folder.includes(".dialog.")) { type = "dialog"; name = folder.split(".dialog.")[1] || folder; }
     else if (folder.includes(".entity.")) { type = "entity"; name = folder.split(".entity.")[1] || folder; }
     else if (folder.includes(".variable.")) { type = "variable"; name = folder.split(".variable.")[1] || folder; }
+    else if (folder.includes(".file.")) { type = "knowledge_file"; name = folder.split(".file.")[1] || folder; }
+    else if (folder.includes(".knowledge.")) { type = "knowledge_source"; name = folder.split(".knowledge.")[1] || folder; }
+    else if (folder.includes(".settings.")) { type = "settings"; name = "Copilot AI Settings"; }
+    else if (folder.includes(".testcase.")) { type = "testcase"; name = folder.split(".testcase.")[1] || folder; }
+    else if (folder.includes(".translations.")) { type = "translations"; name = folder.split(".translations.")[1] || folder; }
     return { folder, schemaName: folder, type, name, hasData: existsSync(join(bcDir, folder, "data")) };
   });
 }

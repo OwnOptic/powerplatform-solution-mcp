@@ -635,7 +635,7 @@ function createMcpServer(): McpServer {
   const server = new McpServer({ name: "Power Platform Solution Explorer", version: "2.0.0" });
   const solParam = { solution: z.string().describe("Solution folder name (e.g. DEMOPersonalAssistant)") };
 
-  // 1. list_solutions
+  // ── Tool 1: list_solutions ──
   server.tool("list_solutions", "List all extracted Power Platform solutions available for exploration", {},
     async () => {
       const solutions = listSolutionDirs().map((d) => {
@@ -645,137 +645,110 @@ function createMcpServer(): McpServer {
       return { content: [{ type: "text", text: JSON.stringify(solutions, null, 2) }] };
     });
 
-  // 2. get_solution_info
-  server.tool("get_solution_info", "Get detailed metadata about a solution including root component breakdown with type codes", solParam,
+  // ── Tool 2: get_solution_info ──
+  server.tool("get_solution_info", "Get solution metadata, component counts, and a natural-language summary", solParam,
     async ({ solution }) => {
       const info = parseSolutionXml(solution);
       if (!info) return { content: [{ type: "text", text: "Solution not found." }] };
-      return { content: [{ type: "text", text: JSON.stringify(info, null, 2) }] };
+      const summary = summarizeSolution(solution);
+      return { content: [{ type: "text", text: JSON.stringify({ ...info, summary }, null, 2) }] };
     });
 
-  // 3. describe_solution
-  server.tool("describe_solution", "Get a comprehensive natural-language summary of everything in the solution — components, flows, agents, connectors, entities, web resources, and more", solParam,
-    async ({ solution }) => ({ content: [{ type: "text", text: summarizeSolution(solution) }] }));
-
-  // 4. get_solution_structure
-  server.tool("get_solution_structure", "Show the folder structure and root files of the extracted solution — reveals what component types are present", solParam,
+  // ── Tool 3: get_solution_structure ──
+  server.tool("get_solution_structure", "Show the folder structure and root files of the extracted solution", solParam,
     async ({ solution }) => {
       const structure = detectFolders(solution);
       return { content: [{ type: "text", text: JSON.stringify(structure, null, 2) }] };
     });
 
-  // 5. list_flows
-  server.tool("list_flows", "List all Power Automate flows with name, category (Cloud Flow, Business Rule, BPF), status, and trigger type", solParam,
-    async ({ solution }) => ({ content: [{ type: "text", text: JSON.stringify(parseFlows(solution), null, 2) }] }));
+  // ── Tool 4: list_components ──
+  const componentTypeEnum = z.enum([
+    "flows", "bot_topics", "bot_actions", "connectors", "custom_connectors",
+    "external_triggers", "entities", "security_roles", "web_resources",
+    "canvas_apps", "environment_variables", "plugins", "model_driven_apps",
+    "option_sets", "knowledge_sources"
+  ]).describe("Type of component to list");
 
-  // 6. get_flow_details
-  server.tool("get_flow_details", "Deep dive into a specific flow — triggers, actions, connectors, prompts, and execution order",
-    { ...solParam, flow_name: z.string().describe("Flow name (as returned by list_flows)") },
-    async ({ solution, flow_name }) => {
-      const flows = parseFlows(solution);
-      const flow = flows.find((f) => f.name.toLowerCase() === flow_name.toLowerCase());
-      if (!flow) return { content: [{ type: "text", text: `Flow "${flow_name}" not found. Available: ${flows.map((f) => f.name).join(", ")}` }] };
-      const def = getFlowDefinition(solution, flow.jsonFile);
-      if (!def) return { content: [{ type: "text", text: "Flow JSON not found." }] };
-      return { content: [{ type: "text", text: JSON.stringify({ ...flow, details: describeFlow(def) }, null, 2) }] };
+  server.tool("list_components",
+    "List components of a specific type: flows, bot_topics, bot_actions, connectors, custom_connectors, external_triggers, entities, security_roles, web_resources, canvas_apps, environment_variables, plugins, model_driven_apps, option_sets, knowledge_sources",
+    { ...solParam, component_type: componentTypeEnum },
+    async ({ solution, component_type }) => {
+      const handlers: Record<string, () => any> = {
+        flows: () => parseFlows(solution),
+        bot_topics: () => parseBotComponents(solution).filter((c) => c.type === "topic"),
+        bot_actions: () => {
+          const actions = parseBotComponents(solution).filter((c) => c.type === "action");
+          const botRefs = parseBotConnectionRefs(solution);
+          return actions.map((c) => {
+            const ref = botRefs.find((r) => r.action === c.schemaName);
+            return { ...c, connectorRef: ref?.connector || "N/A" };
+          });
+        },
+        connectors: () => parseConnectors(solution),
+        custom_connectors: () => parseCustomConnectors(solution),
+        external_triggers: () => {
+          const triggers = parseBotComponents(solution).filter((c) => c.type === "trigger");
+          return triggers.map((t) => ({ ...t, data: getBotComponentData(solution, t.folder)?.substring(0, 500) || "N/A" }));
+        },
+        entities: () => {
+          const entities = parseEntities(solution);
+          return entities.map(e => ({
+            name: e.name, displayName: e.displayName,
+            formCount: e.formCount, viewCount: e.viewCount, chartCount: e.chartCount,
+            attributeCount: e.attributeCount,
+            relationshipCount: (e.relationships?.oneToMany?.length || 0) + (e.relationships?.manyToMany?.length || 0),
+            keyCount: e.keys?.length || 0, hasRibbon: e.hasRibbon,
+          }));
+        },
+        security_roles: () => parseRoles(solution),
+        web_resources: () => parseWebResources(solution),
+        canvas_apps: () => parseCanvasApps(solution),
+        environment_variables: () => parseEnvironmentVariables(solution),
+        plugins: () => parsePluginAssemblies(solution),
+        model_driven_apps: () => parseAppModules(solution),
+        option_sets: () => parseOptionSets(solution),
+        knowledge_sources: () => parseKnowledgeSources(solution),
+      };
+      const result = handlers[component_type]();
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     });
 
-  // 7. list_bot_topics
-  server.tool("list_bot_topics", "List all Copilot Studio conversation topics (ConversationStart, Greeting, Fallback, custom topics, etc.)", solParam,
-    async ({ solution }) => ({ content: [{ type: "text", text: JSON.stringify(parseBotComponents(solution).filter((c) => c.type === "topic"), null, 2) }] }));
-
-  // 8. list_bot_actions
-  server.tool("list_bot_actions", "List all Copilot Studio actions with their connector mappings — connector operations, MCP servers, custom actions", solParam,
-    async ({ solution }) => {
-      const actions = parseBotComponents(solution).filter((c) => c.type === "action");
-      const botRefs = parseBotConnectionRefs(solution);
-      const enriched = actions.map((c) => {
-        const ref = botRefs.find((r) => r.action === c.schemaName);
-        return { ...c, connectorRef: ref?.connector || "N/A" };
-      });
-      return { content: [{ type: "text", text: JSON.stringify(enriched, null, 2) }] };
+  // ── Tool 5: get_component_detail ──
+  server.tool("get_component_detail",
+    "Deep dive into a single component by type and name: flow details (triggers, actions, connectors), entity schema (columns, relationships, keys), bot component raw data, or agent system prompt",
+    {
+      ...solParam,
+      component_type: z.enum(["flow", "entity", "bot_component"]).describe("Type of component: flow, entity, or bot_component"),
+      name: z.string().describe("Component name. For flows: flow name from list_components. For entities: logical name. For bot_component: folder name, or 'system_prompt' for agent instructions."),
+    },
+    async ({ solution, component_type, name }) => {
+      if (component_type === "flow") {
+        const flows = parseFlows(solution);
+        const flow = flows.find((f) => f.name.toLowerCase() === name.toLowerCase());
+        if (!flow) return { content: [{ type: "text", text: `Flow "${name}" not found. Available: ${flows.map((f) => f.name).join(", ")}` }] };
+        const def = getFlowDefinition(solution, flow.jsonFile);
+        if (!def) return { content: [{ type: "text", text: "Flow JSON not found." }] };
+        return { content: [{ type: "text", text: JSON.stringify({ ...flow, details: describeFlow(def) }, null, 2) }] };
+      }
+      if (component_type === "entity") {
+        const schema = getEntitySchema(solution, name);
+        if (!schema) return { content: [{ type: "text", text: `Entity "${name}" not found in this solution.` }] };
+        return { content: [{ type: "text", text: JSON.stringify(schema, null, 2) }] };
+      }
+      if (component_type === "bot_component") {
+        if (name.toLowerCase() === "system_prompt") {
+          const gpt = parseBotComponents(solution).find((c) => c.type === "gpt");
+          if (!gpt) return { content: [{ type: "text", text: "No GPT/system prompt component found." }] };
+          return { content: [{ type: "text", text: getBotComponentData(solution, gpt.folder) || "No data." }] };
+        }
+        const data = getBotComponentData(solution, name);
+        if (!data) return { content: [{ type: "text", text: `Component "${name}" not found.` }] };
+        return { content: [{ type: "text", text: data }] };
+      }
+      return { content: [{ type: "text", text: `Unknown component type: ${component_type}` }] };
     });
 
-  // 9. get_agent_system_prompt
-  server.tool("get_agent_system_prompt", "Get the full system prompt / instructions / persona configured for the Copilot Studio agent", solParam,
-    async ({ solution }) => {
-      const gpt = parseBotComponents(solution).find((c) => c.type === "gpt");
-      if (!gpt) return { content: [{ type: "text", text: "No GPT/system prompt component found." }] };
-      return { content: [{ type: "text", text: getBotComponentData(solution, gpt.folder) || "No data." }] };
-    });
-
-  // 10. list_connectors
-  server.tool("list_connectors", "List all connection references — Office 365, Outlook, Planner, Copilot Studio, custom connectors, etc.", solParam,
-    async ({ solution }) => ({ content: [{ type: "text", text: JSON.stringify(parseConnectors(solution), null, 2) }] }));
-
-  // 11. get_component_data
-  server.tool("get_component_data", "Get the raw YAML/JSON data for any bot component by its folder name",
-    { ...solParam, component: z.string().describe("Component folder name") },
-    async ({ solution, component }) => {
-      const data = getBotComponentData(solution, component);
-      if (!data) return { content: [{ type: "text", text: `Component "${component}" not found.` }] };
-      return { content: [{ type: "text", text: data }] };
-    });
-
-  // 12. list_external_triggers
-  server.tool("list_external_triggers", "List all external triggers (Power Automate flows that invoke the agent)", solParam,
-    async ({ solution }) => {
-      const triggers = parseBotComponents(solution).filter((c) => c.type === "trigger");
-      const enriched = triggers.map((t) => ({ ...t, data: getBotComponentData(solution, t.folder)?.substring(0, 500) || "N/A" }));
-      return { content: [{ type: "text", text: JSON.stringify(enriched, null, 2) }] };
-    });
-
-  // 13. list_entities
-  server.tool("list_entities", "List all Dataverse entities/tables in the solution with forms, views, charts, columns, relationships, and keys", solParam,
-    async ({ solution }) => {
-      const entities = parseEntities(solution);
-      const summary = entities.map(e => ({
-        name: e.name,
-        displayName: e.displayName,
-        formCount: e.formCount,
-        viewCount: e.viewCount,
-        chartCount: e.chartCount,
-        attributeCount: e.attributeCount,
-        relationshipCount: (e.relationships?.oneToMany?.length || 0) + (e.relationships?.manyToMany?.length || 0),
-        keyCount: e.keys?.length || 0,
-        hasRibbon: e.hasRibbon,
-      }));
-      return { content: [{ type: "text", text: JSON.stringify(summary, null, 2) }] };
-    });
-
-  // 14. list_security_roles
-  server.tool("list_security_roles", "List all security roles defined in the solution with privilege counts", solParam,
-    async ({ solution }) => ({ content: [{ type: "text", text: JSON.stringify(parseRoles(solution), null, 2) }] }));
-
-  // 15. list_web_resources
-  server.tool("list_web_resources", "List all web resources (HTML, JS, CSS, images, SVG, RESX) with file types and sizes", solParam,
-    async ({ solution }) => ({ content: [{ type: "text", text: JSON.stringify(parseWebResources(solution), null, 2) }] }));
-
-  // 16. list_canvas_apps
-  server.tool("list_canvas_apps", "List all Canvas Apps (.msapp files) in the solution", solParam,
-    async ({ solution }) => ({ content: [{ type: "text", text: JSON.stringify(parseCanvasApps(solution), null, 2) }] }));
-
-  // 17. list_environment_variables
-  server.tool("list_environment_variables", "List all environment variables with their type (String, Number, Boolean, JSON, Secret, Data Source) and default values", solParam,
-    async ({ solution }) => ({ content: [{ type: "text", text: JSON.stringify(parseEnvironmentVariables(solution), null, 2) }] }));
-
-  // 18. list_custom_connectors
-  server.tool("list_custom_connectors", "List all custom connectors with their OpenAPI definition, host, auth type, and operation count", solParam,
-    async ({ solution }) => ({ content: [{ type: "text", text: JSON.stringify(parseCustomConnectors(solution), null, 2) }] }));
-
-  // 19. list_plugin_assemblies
-  server.tool("list_plugin_assemblies", "List all plugin assemblies (DLLs) included in the solution", solParam,
-    async ({ solution }) => ({ content: [{ type: "text", text: JSON.stringify(parsePluginAssemblies(solution), null, 2) }] }));
-
-  // 20. list_app_modules
-  server.tool("list_app_modules", "List all model-driven apps defined in the solution", solParam,
-    async ({ solution }) => ({ content: [{ type: "text", text: JSON.stringify(parseAppModules(solution), null, 2) }] }));
-
-  // 21. list_option_sets
-  server.tool("list_option_sets", "List all global option sets (choices) with their options/values", solParam,
-    async ({ solution }) => ({ content: [{ type: "text", text: JSON.stringify(parseOptionSets(solution), null, 2) }] }));
-
-  // 22. get_sitemap
+  // ── Tool 6: get_sitemap ──
   server.tool("get_sitemap", "Get the sitemap navigation structure (areas, groups, sub-areas) for model-driven apps", solParam,
     async ({ solution }) => {
       const sm = parseSiteMap(solution);
@@ -783,7 +756,7 @@ function createMcpServer(): McpServer {
       return { content: [{ type: "text", text: JSON.stringify(sm, null, 2) }] };
     });
 
-  // 23. search_solution
+  // ── Tool 7: search_solution ──
   server.tool("search_solution", "Full-text search across all solution files (flows, topics, actions, prompts, XML, JSON) for a keyword",
     { ...solParam, query: z.string().describe("Search keyword or phrase") },
     async ({ solution, query }) => {
@@ -813,7 +786,7 @@ function createMcpServer(): McpServer {
       return { content: [{ type: "text", text: results.length ? JSON.stringify(results, null, 2) : `No matches for "${query}".` }] };
     });
 
-  // 24. get_raw_file
+  // ── Tool 8: get_raw_file ──
   server.tool("get_raw_file", "Read any raw file from the extracted solution by relative path",
     { ...solParam, file_path: z.string().describe("Relative path within the solution (e.g. solution.xml, Workflows/MyFlow.json)") },
     async ({ solution, file_path }) => {
@@ -822,26 +795,9 @@ function createMcpServer(): McpServer {
       return { content: [{ type: "text", text: content.substring(0, 50000) }] };
     });
 
-  // 25. get_entity_schema
-  server.tool("get_entity_schema", "Get the full Dataverse schema for a single entity/table: all columns/attributes, relationships (1:N, N:N), keys, forms, views, and charts",
-    { ...solParam, entity_name: z.string().describe("Logical name of the entity (e.g. cr_leave_request, account)") },
-    async ({ solution, entity_name }) => {
-      const schema = getEntitySchema(solution, entity_name);
-      if (!schema) return { content: [{ type: "text", text: `Entity "${entity_name}" not found in this solution.` }] };
-      return { content: [{ type: "text", text: JSON.stringify(schema, null, 2) }] };
-    });
-
-  // 26. list_knowledge_sources
-  server.tool("list_knowledge_sources", "List all Copilot Studio knowledge sources and knowledge files (SharePoint sites, Dataverse search, uploaded files, web URLs)", solParam,
-    async ({ solution }) => {
-      const sources = parseKnowledgeSources(solution);
-      if (!sources.length) return { content: [{ type: "text", text: "No knowledge sources found in this solution." }] };
-      return { content: [{ type: "text", text: JSON.stringify(sources, null, 2) }] };
-    });
-
-  // 27. load_solution_context — the "give me everything" tool
+  // ── Tool 9: load_solution_context ──
   server.tool("load_solution_context",
-    "Load FULL context for a solution in one call: metadata, all flows with trigger/action details, agent system prompt (untruncated), all bot components, connectors, entities, roles, env vars, and folder structure. Call this first to deeply understand a solution before answering questions.",
+    "Load FULL context for a solution in one call: metadata, all flows with trigger/action details, agent system prompt (untruncated), all bot components, connectors, entities, roles, env vars, sitemap, knowledge sources, and folder structure. Call this first to deeply understand a solution before answering questions.",
     solParam,
     async ({ solution }) => {
       const solDir = solution;
@@ -967,6 +923,13 @@ function createMcpServer(): McpServer {
       if (knowledgeSources.length) {
         sections.push(`\n## Knowledge Sources (${knowledgeSources.length})`);
         for (const ks of knowledgeSources) sections.push(`- [${ks.type}] ${ks.name}`);
+      }
+
+      // ── Sitemap ──
+      const sitemap = parseSiteMap(solDir);
+      if (sitemap) {
+        sections.push(`\n## Sitemap Navigation`);
+        sections.push(JSON.stringify(sitemap, null, 2));
       }
 
       // ── Other components ──
@@ -1103,7 +1066,7 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
 
   if (req.url === "/" || req.url === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "ok", server: "Power Platform Solution Explorer MCP", version: "2.0.0", tools: 27, solutions: listSolutionDirs() }));
+    res.end(JSON.stringify({ status: "ok", server: "Power Platform Solution Explorer MCP", version: "2.0.0", tools: 9, solutions: listSolutionDirs() }));
     return;
   }
 
@@ -1144,7 +1107,7 @@ httpServer.listen(PORT, () => {
   console.log(`  MCP endpoint:    http://localhost:${PORT}/mcp`);
   console.log(`  Health check:    http://localhost:${PORT}/health`);
   console.log(`  Auth:            ${MCP_API_KEY ? `API key via "${MCP_API_KEY_HEADER}" header` : "none (open access)"}`);
-  console.log(`  Tools:           27`);
+  console.log(`  Tools:           9`);
   console.log(`  Solutions:       ${listSolutionDirs().join(", ") || "none"}`);
   console.log(`\n  Drop .zip files into ${SOLUTIONS_DIR} and restart.\n`);
 });

@@ -8,14 +8,14 @@
 <h1 align="center">Power Platform Solution Explorer MCP</h1>
 
 <p align="center">
-  <strong>Export a Power Platform solution → drop the ZIP → let any AI agent answer questions about it.</strong>
+  <strong>Export a Power Platform solution, drop the ZIP, let any AI agent answer questions about it.</strong>
 </p>
 
 <p align="center">
   <a href="#quickstart">Quickstart</a> &bull;
   <a href="#how-it-works">How It Works</a> &bull;
   <a href="#copilot-studio-integration">Copilot Studio</a> &bull;
-  <a href="#tools">24 Tools</a> &bull;
+  <a href="#tools">9 Tools</a> &bull;
   <a href="#resources">MCP Resources</a> &bull;
   <a href="#troubleshooting">Troubleshooting</a>
 </p>
@@ -96,16 +96,17 @@ You'll see output like:
   ──────────────────────────────────────────
   ZIP drop folder: /path/to/solutions
   Extracted to:    /path/to/extracted
-  ✓ Extracted: MySolution_1_0_0_1.zip → MySolution_1_0_0_1
+  New extractions: MySolution_1_0_0_1
   MCP endpoint:    http://localhost:3001/mcp
   Health check:    http://localhost:3001/health
-  Tools:           24
+  Auth:            API key via "contoso-hr-demo-2026" header
+  Tools:           9
   Solutions:       MySolution_1_0_0_1
 
   Drop .zip files into /path/to/solutions and restart.
 ```
 
-**That's it.** The server auto-extracts every ZIP, validates it's a real Power Platform solution (checks for `solution.xml`), and exposes 24 tools + dynamic resources.
+**That's it.** The server auto-extracts every ZIP, validates it's a real Power Platform solution (checks for `solution.xml`), and exposes 9 tools + dynamic resources.
 
 ### Step 5: Verify it works
 
@@ -117,7 +118,7 @@ curl http://localhost:3001/health
 
 You should see:
 ```json
-{"status":"ok","server":"Power Platform Solution Explorer MCP","version":"2.0.0","tools":24,"solutions":["MySolution_1_0_0_1"]}
+{"status":"ok","server":"Power Platform Solution Explorer MCP","version":"2.0.0","tools":9,"solutions":["MySolution_1_0_0_1"]}
 ```
 
 ---
@@ -126,8 +127,8 @@ You should see:
 
 ```
 ┌─────────────────────┐
-│  1. EXPORT           │    Go to make.powerapps.com → Solutions → select solution
-│     from Power       │    → Export → Unmanaged (or Managed) → Download ZIP
+│  1. EXPORT           │    Go to make.powerapps.com > Solutions > select solution
+│     from Power       │    > Export > Unmanaged (or Managed) > Download ZIP
 │     Platform         │
 └─────────┬───────────┘
           │
@@ -140,45 +141,47 @@ You should see:
           ▼
 ┌─────────────────────┐
 │  3. START SERVER     │    npm run dev
-│     (auto-extracts)  │    → validates solution.xml exists
-│                      │    → parses all components
+│     (auto-extracts)  │    > validates solution.xml exists
+│                      │    > parses all components
 └─────────┬───────────┘
           │
           ▼
 ┌─────────────────────┐
 │  4. CONNECT CLIENT   │    Copilot Studio, Claude Desktop, or any MCP client
-│     via /mcp         │    → discovers 24 tools + resources
-│     endpoint         │    → user asks questions in natural language
+│     via /mcp         │    > discovers 9 tools + resources
+│     endpoint         │    > user asks questions in natural language
 └─────────────────────┘
 ```
 
 ### Architecture
 
 ```
-┌─────────────────┐     ┌──────────────────────────┐     ┌──────────────┐
-│  Copilot Studio │────>│  Streamable HTTP (POST)  │────>│  MCP Server  │
-│  Claude Desktop │     │  /mcp endpoint           │     │  (stateless) │
-│  Any MCP Client │     │  Port 3001               │     │              │
-└─────────────────┘     └──────────────────────────┘     └──────┬───────┘
-                                                                │
-                                                     ┌──────────▼──────────┐
-                                                     │  Solution Parser    │
-                                                     │  ─────────────────  │
-                                                     │  solution.xml       │
-                                                     │  customizations.xml │
-                                                     │  Workflows/*.json   │
-                                                     │  botcomponents/     │
-                                                     │  WebResources/      │
-                                                     │  ...30+ folders     │
-                                                     └─────────────────────┘
+┌─────────────────┐     ┌──────────────────────────┐     ┌──────────────────┐
+│  Copilot Studio │────>│  Streamable HTTP (POST)  │────>│  MCP Server      │
+│  Claude Desktop │     │  /mcp endpoint           │     │  9 tools         │
+│  Any MCP Client │     │  Port 3001               │     │  15 component    │
+└─────────────────┘     └──────────────────────────┘     │  types via enum  │
+                                                         └────────┬─────────┘
+                                                                  │
+                                                       ┌──────────▼──────────┐
+                                                       │  Solution Parser    │
+                                                       │  ─────────────────  │
+                                                       │  solution.xml       │
+                                                       │  customizations.xml │
+                                                       │  Workflows/*.json   │
+                                                       │  botcomponents/     │
+                                                       │  WebResources/      │
+                                                       │  ...30+ folders     │
+                                                       └─────────────────────┘
 ```
 
 ### Key Design Decisions
 
-- **Stateless factory pattern** — each HTTP POST creates a fresh `McpServer` instance. This is required for Copilot Studio's Streamable HTTP transport.
+- **Stateless factory pattern** -- each HTTP POST creates a fresh `McpServer` instance. This is required for Copilot Studio's Streamable HTTP transport.
+- **9 tools instead of 27** -- consolidated using enum parameters. `list_components` handles 15 component types through a single `component_type` enum, making it much easier for LLMs to pick the right tool.
 - **Zero external dependencies** beyond `@modelcontextprotocol/sdk` and `zod`. XML parsing uses regex (Power Platform solution XMLs are well-structured and predictable).
-- **Auto-extract on startup** — drop ZIPs in `solutions/`, start server, done. Invalid ZIPs (no `solution.xml`) are automatically cleaned up.
-- **Cross-platform** — works on Windows (PowerShell `Expand-Archive`), Mac, and Linux (`unzip`).
+- **Auto-extract on startup** -- drop ZIPs in `solutions/`, start server, done. Invalid ZIPs (no `solution.xml`) are automatically cleaned up.
+- **Cross-platform** -- works on Windows (PowerShell `Expand-Archive`), Mac, and Linux (`unzip`).
 - **70+ component type codes** mapped from the Dataverse `solutioncomponent` entity.
 
 ---
@@ -237,20 +240,22 @@ https://abc123-3001.euw.devtunnels.ms
 
 Your MCP endpoint is: `https://abc123-3001.euw.devtunnels.ms/mcp`
 
-> **Keep both terminals open** — one for the MCP server, one for the dev tunnel.
+> **Keep both terminals open** -- one for the MCP server, one for the dev tunnel.
 
 ### Step 3: Register in Copilot Studio
 
 1. Go to [copilotstudio.microsoft.com](https://copilotstudio.microsoft.com)
 2. Open your agent (or create a new one)
 3. Go to **Tools** in the left sidebar
-4. Click **Add a tool** → **New tool** → **Model Context Protocol**
+4. Click **Add a tool** > **New tool** > **Model Context Protocol**
 5. Fill in:
    - **Server name:** `Power Platform Solution Explorer`
    - **Server description:** `Parses exported Power Platform solution ZIPs and exposes components as tools`
    - **Server URL:** `https://<your-tunnel-id>-3001.euw.devtunnels.ms/mcp`
-   - **Authentication:** None (for local dev; use API Key for production)
-6. Click **Next** — Copilot Studio will connect and discover all 24 tools
+   - **Authentication:** API Key (Header type)
+   - **Header name:** `contoso-hr-demo-2026` (or your custom `MCP_API_KEY_HEADER`)
+   - **API key value:** `sol-explorer-2026` (or your custom `MCP_API_KEY`)
+6. Click **Next** -- Copilot Studio will connect and discover all 9 tools
 7. Select which tools to enable (recommend: enable all)
 8. Click **Add**
 
@@ -258,7 +263,7 @@ Your MCP endpoint is: `https://abc123-3001.euw.devtunnels.ms/mcp`
 
 For the agent to automatically pick the right tool based on user questions:
 
-1. Go to your agent's **Settings** → **Generative AI**
+1. Go to your agent's **Settings** > **Generative AI**
 2. Enable **Generative orchestration** (or "Classic + Generative")
 3. Save
 
@@ -269,88 +274,86 @@ In the Copilot Studio test pane, ask:
 | Question | What happens |
 |---|---|
 | *"What solutions are available?"* | Calls `list_solutions` |
-| *"Describe this solution"* | Calls `describe_solution` → full natural-language summary |
-| *"What flows are in the solution?"* | Calls `list_flows` → all flows with triggers and categories |
-| *"Show me the agent's system prompt"* | Calls `get_agent_system_prompt` → full persona/instructions |
-| *"What connectors does it use?"* | Calls `list_connectors` → all connection references |
-| *"Search for anything about email"* | Calls `search_solution` → full-text search across all files |
-| *"What tables are in the solution?"* | Calls `list_entities` → Dataverse tables with forms/views |
+| *"Describe this solution"* | Calls `get_solution_info` > metadata + natural-language summary |
+| *"What flows are in the solution?"* | Calls `list_components(component_type=flows)` |
+| *"Show me the agent's system prompt"* | Calls `get_component_detail(component_type=bot_component, name=system_prompt)` |
+| *"What connectors does it use?"* | Calls `list_components(component_type=connectors)` |
+| *"Search for anything about email"* | Calls `search_solution` > full-text search across all files |
+| *"Give me everything about this solution"* | Calls `load_solution_context` > full context in one call |
 
 ---
 
 ## Tools
 
-24 tools organized by component type. Every tool accepts a `solution` parameter (the folder name of the extracted solution).
+9 tools that cover every aspect of a Power Platform solution. Every tool accepts a `solution` parameter (the folder name of the extracted solution).
 
 ### Solution Overview
 
 | Tool | Description |
 |---|---|
 | `list_solutions` | List all extracted solutions available for exploration |
-| `get_solution_info` | Solution metadata — name, version, publisher, root components with type codes (70+ types mapped) |
-| `describe_solution` | Comprehensive natural-language summary: what the solution does, what components it has, what it connects to |
-| `get_solution_structure` | Folder tree detection — reveals what component types are physically present |
+| `get_solution_info` | Solution metadata + component counts + natural-language summary |
+| `get_solution_structure` | Folder tree detection -- reveals what component types are present |
 
-### Power Automate Flows
-
-| Tool | Description |
-|---|---|
-| `list_flows` | All flows with category (Cloud Flow, Desktop Flow, Business Rule, BPF, Action), status, trigger type |
-| `get_flow_details` | Deep dive into a single flow: trigger details, every action in order, connection references, prompts |
-
-### Copilot Studio / Agents
+### Component Listing
 
 | Tool | Description |
 |---|---|
-| `list_bot_topics` | All conversation topics — ConversationStart, Greeting, Fallback, Escalate, custom topics |
-| `list_bot_actions` | All actions with connector mappings (which connector operation each action calls) |
-| `get_agent_system_prompt` | Full system prompt / persona / instructions (the text in the GPT component) |
-| `get_component_data` | Raw YAML/JSON for any bot component by folder name |
-| `list_external_triggers` | Power Automate flow triggers that invoke the agent |
+| `list_components` | List any component type using the `component_type` enum parameter |
 
-### Dataverse & Model-Driven Apps
+The `component_type` parameter accepts these values:
+
+| Value | What it returns |
+|---|---|
+| `flows` | Power Automate flows with category, status, trigger type |
+| `bot_topics` | Copilot Studio conversation topics |
+| `bot_actions` | Copilot Studio actions with connector mappings |
+| `connectors` | Connection references (Office 365, Outlook, Planner, etc.) |
+| `custom_connectors` | Custom connectors with OpenAPI definition, auth type, operation count |
+| `external_triggers` | Power Automate flow triggers that invoke the agent |
+| `entities` | Dataverse tables with column, relationship, and key counts |
+| `security_roles` | Security roles with privilege counts |
+| `web_resources` | HTML, JS, CSS, images with file types and sizes |
+| `canvas_apps` | Canvas Apps (.msapp files) |
+| `environment_variables` | Environment variables (String, Number, Boolean, JSON, Secret, Data Source) |
+| `plugins` | Plugin assemblies (DLLs) |
+| `model_driven_apps` | Model-driven app definitions |
+| `option_sets` | Global choices with options and integer values |
+| `knowledge_sources` | Copilot Studio knowledge sources and files |
+
+### Component Details
 
 | Tool | Description |
 |---|---|
-| `list_entities` | Tables with counts of forms, views, and charts |
-| `list_security_roles` | Security roles with privilege counts |
-| `list_option_sets` | Global choices (option sets) with all options and integer values |
-| `list_app_modules` | Model-driven app definitions |
-| `get_sitemap` | Navigation structure — areas, groups, sub-areas |
+| `get_component_detail` | Deep dive into a single component by type and name |
 
-### Canvas Apps & Web Resources
+The `component_type` parameter accepts:
+
+| Value | What it returns |
+|---|---|
+| `flow` | Trigger details, every action in order, connection references, prompts |
+| `entity` | Full Dataverse schema: columns, relationships (1:N, N:N), keys, forms, views |
+| `bot_component` | Raw YAML/JSON data for any bot component by folder name, or `system_prompt` for agent instructions |
+
+### Navigation, Search & Raw Access
 
 | Tool | Description |
 |---|---|
-| `list_canvas_apps` | Canvas Apps (`.msapp` files) found in the solution |
-| `list_web_resources` | HTML, JS, CSS, images, SVGs — with file types and sizes |
-
-### Connectors & Configuration
-
-| Tool | Description |
-|---|---|
-| `list_connectors` | All connection references — Office 365, Planner, Outlook, custom connectors |
-| `list_custom_connectors` | Custom connectors with OpenAPI definition, auth type, operation count |
-| `list_environment_variables` | Environment variables — String, Number, Boolean, JSON, Secret, Data Source |
-
-### Plugins & Extensions
-
-| Tool | Description |
-|---|---|
-| `list_plugin_assemblies` | Plugin DLLs (.dll) included in the solution |
-
-### Search & Raw Access
-
-| Tool | Description |
-|---|---|
+| `get_sitemap` | Sitemap navigation structure (areas, groups, sub-areas) for model-driven apps |
 | `search_solution` | Full-text search across ALL files in the solution (XML, JSON, YAML, everything) |
 | `get_raw_file` | Read any file by relative path (e.g. `solution.xml`, `Workflows/MyFlow.json`) |
+
+### Full Context
+
+| Tool | Description |
+|---|---|
+| `load_solution_context` | Load everything in one call: metadata, flows with trigger/action details, agent system prompt (untruncated), all bot components, connectors, entities, roles, env vars, sitemap, knowledge sources, and folder structure. Call this first to deeply understand a solution. |
 
 ---
 
 ## Resources
 
-The server also exposes **MCP Resources** — structured data that MCP clients can read automatically without a tool call. Copilot Studio shows these in the **Resources** tab (Preview feature).
+The server also exposes **MCP Resources** -- structured data that MCP clients can read automatically without a tool call. Copilot Studio shows these in the **Resources** tab (Preview feature).
 
 Resources are registered dynamically for the **5 most recently extracted solutions** (sorted by modification time):
 
@@ -375,9 +378,9 @@ If you've never exported a solution before, here's how:
 3. Click **Solutions** in the left sidebar
 4. Click the solution you want to explore
 5. Click **Export** in the top toolbar
-6. Choose **Unmanaged** (recommended — includes full source) or **Managed**
+6. Choose **Unmanaged** (recommended -- includes full source) or **Managed**
 7. Click **Export** and wait for the download
-8. Save the `.zip` file — **do not extract it yourself**, the server does that
+8. Save the `.zip` file -- **do not extract it yourself**, the server does that
 
 > **Unmanaged vs Managed:** Unmanaged exports include all source files (flow definitions, bot components, etc.). Managed exports may have some files compiled/packaged. For best results with this tool, use **Unmanaged**.
 
@@ -387,91 +390,30 @@ If you've never exported a solution before, here's how:
 
 The server parses the complete Power Platform solution anatomy:
 
-| Component | Source File(s) | Tool(s) |
+| Component | Source File(s) | Tool |
 |---|---|---|
-| Solution metadata | `solution.xml` | `get_solution_info`, `describe_solution` |
+| Solution metadata | `solution.xml` | `get_solution_info` |
 | Root components (70+ types) | `solution.xml` | `get_solution_info` |
-| Cloud Flows / Business Rules / BPFs | `customizations.xml` + `Workflows/*.json` | `list_flows`, `get_flow_details` |
-| Copilot Studio topics | `botcomponents/*.topic.*/data` | `list_bot_topics` |
-| Copilot Studio actions | `botcomponents/*.action.*/data` | `list_bot_actions` |
-| Agent system prompt | `botcomponents/*.gpt.*/data` | `get_agent_system_prompt` |
-| Knowledge sources | `botcomponents/*.knowledge.*/data` | `get_component_data` |
-| Knowledge files | `botcomponents/*.file.*/data` | `get_component_data` |
-| External triggers | `botcomponents/*.ExternalTriggerComponent.*` | `list_external_triggers` |
-| Copilot settings | `botcomponents/*.settings.*/data` | `get_component_data` |
-| Test cases | `botcomponents/*.testcase.*/data` | `get_component_data` |
-| Connection references | `customizations.xml` | `list_connectors` |
-| Bot-connector mappings | `Assets/botcomponent_connectionreferenceset.xml` | `list_bot_actions` |
-| Dataverse entities/tables | `customizations.xml` > `<Entities>` | `list_entities` |
-| Forms, views, charts | `customizations.xml` (nested in Entity) | `list_entities` |
-| Security roles | `customizations.xml` > `<Roles>` | `list_security_roles` |
-| Web resources | `WebResources/` folder | `list_web_resources` |
-| Canvas apps | `CanvasApps/*.msapp` | `list_canvas_apps` |
-| Environment variables | `environmentvariabledefinitions/` | `list_environment_variables` |
-| Custom connectors | `Connectors/` or `connectors/` | `list_custom_connectors` |
-| Plugin assemblies | `PluginAssemblies/` | `list_plugin_assemblies` |
-| Model-driven apps | `customizations.xml` > `<AppModules>` | `list_app_modules` |
-| Global option sets | `customizations.xml` > `<optionsets>` | `list_option_sets` |
+| Cloud Flows / Business Rules / BPFs | `customizations.xml` + `Workflows/*.json` | `list_components(flows)`, `get_component_detail(flow)` |
+| Copilot Studio topics | `botcomponents/*.topic.*/data` | `list_components(bot_topics)` |
+| Copilot Studio actions | `botcomponents/*.action.*/data` | `list_components(bot_actions)` |
+| Agent system prompt | `botcomponents/*.gpt.*/data` | `get_component_detail(bot_component, system_prompt)` |
+| Knowledge sources | `botcomponents/*.knowledge.*/data` | `list_components(knowledge_sources)` |
+| Knowledge files | `botcomponents/*.file.*/data` | `list_components(knowledge_sources)` |
+| External triggers | `botcomponents/*.ExternalTriggerComponent.*` | `list_components(external_triggers)` |
+| Connection references | `customizations.xml` | `list_components(connectors)` |
+| Bot-connector mappings | `Assets/botcomponent_connectionreferenceset.xml` | `list_components(bot_actions)` |
+| Dataverse entities/tables | `customizations.xml` > `<Entities>` | `list_components(entities)`, `get_component_detail(entity)` |
+| Entity schemas (columns, relationships, keys) | `customizations.xml` | `get_component_detail(entity)` |
+| Security roles | `customizations.xml` > `<Roles>` | `list_components(security_roles)` |
+| Web resources | `WebResources/` folder | `list_components(web_resources)` |
+| Canvas apps | `CanvasApps/*.msapp` | `list_components(canvas_apps)` |
+| Environment variables | `environmentvariabledefinitions/` | `list_components(environment_variables)` |
+| Custom connectors | `Connectors/` or `connectors/` | `list_components(custom_connectors)` |
+| Plugin assemblies | `PluginAssemblies/` | `list_components(plugins)` |
+| Model-driven apps | `customizations.xml` > `<AppModules>` | `list_components(model_driven_apps)` |
+| Global option sets | `customizations.xml` > `<optionsets>` | `list_components(option_sets)` |
 | Sitemap navigation | `customizations.xml` > `<SiteMap>` | `get_sitemap` |
-
----
-
-## Component Type Codes
-
-The server maps all 70+ Dataverse `solutioncomponent.componenttype` values. These appear in `solution.xml` as `<RootComponent type="29" .../>`. Key types:
-
-| Code | Type | Code | Type |
-|---|---|---|---|
-| 1 | Entity (Table) | 61 | Web Resource |
-| 9 | Option Set (Choice) | 62 | Site Map |
-| 20 | Security Role | 66 | Custom Control (PCF) |
-| 24 | Form | 80 | App Module (Model-Driven App) |
-| 26 | View | 91 | Plugin Assembly |
-| 29 | Workflow / Cloud Flow | 92 | SDK Message Processing Step |
-| 31 | Report | 300 | Canvas App |
-| 36 | Email Template | 371 | Custom Connector |
-| 44 | Duplicate Rule | 380 | Environment Variable Definition |
-| 59 | Chart | 381 | Environment Variable Value |
-| 60 | System Form | 400-402 | AI Builder |
-| — | — | 10150 | Connection Reference |
-
----
-
-## Folder Structure
-
-After cloning and running, your project looks like this:
-
-```
-powerplatform-solution-mcp/
-├── solutions/                  ← DROP YOUR ZIP FILES HERE
-│   ├── .gitkeep
-│   └── MySolution_1_0_0_1.zip ← your exported solution
-├── extracted/                  ← auto-created on startup
-│   └── MySolution_1_0_0_1/    ← auto-extracted from ZIP
-│       ├── solution.xml
-│       ├── customizations.xml
-│       ├── [Content_Types].xml
-│       ├── Workflows/          ← Cloud Flows, Business Rules
-│       │   ├── Flow1.json
-│       │   └── Flow2.json
-│       ├── botcomponents/      ← Copilot Studio topics, actions, prompts
-│       │   ├── bot.topic.Greeting/
-│       │   ├── bot.action.SendEmail/
-│       │   └── bot.gpt.default/
-│       ├── bots/               ← Bot definitions
-│       ├── Assets/             ← Bot-connector mappings
-│       ├── WebResources/       ← HTML, JS, CSS, images
-│       ├── CanvasApps/         ← .msapp files
-│       ├── PluginAssemblies/   ← .dll files
-│       ├── Connectors/         ← Custom connector definitions
-│       ├── environmentvariabledefinitions/
-│       └── ...                 ← 30+ possible component folders
-├── src/
-│   └── index.ts               ← THE server (single file, ~880 lines)
-├── package.json
-├── tsconfig.json
-└── .gitignore
-```
 
 ---
 
@@ -480,19 +422,22 @@ powerplatform-solution-mcp/
 | Environment Variable | Default | Description |
 |---|---|---|
 | `PORT` | `3001` | HTTP server port |
-| `MCP_API_KEY` | *(empty)* | API key for authenticating requests to `/mcp`. If not set, the server allows anonymous access. |
-| `MCP_API_KEY_HEADER` | `api-key` | Header name the server checks for the API key. Must match the header name configured in Copilot Studio. |
+| `MCP_API_KEY` | `sol-explorer-2026` | API key for authenticating requests to `/mcp`. Set to empty string for open access. |
+| `MCP_API_KEY_HEADER` | `contoso-hr-demo-2026` | Header name the server checks for the API key. Must match the header name configured in Copilot Studio. |
 
 Examples:
 ```bash
-# Open access (default)
+# Default auth (API key = sol-explorer-2026, header = contoso-hr-demo-2026)
+npm run dev
+
+# Custom port
 PORT=8080 npm run dev
 
-# With API key auth
-MCP_API_KEY=my-secret-key npm run dev
+# Custom API key and header
+MCP_API_KEY=my-secret-key MCP_API_KEY_HEADER=x-my-auth npm run dev
 
-# With custom header name (must match Copilot Studio config)
-MCP_API_KEY=my-secret-key MCP_API_KEY_HEADER=api-key npm run dev
+# Open access (no auth)
+MCP_API_KEY= npm run dev
 ```
 
 ### Copilot Studio API Key Setup
@@ -502,10 +447,45 @@ When registering the MCP tool in Copilot Studio with API key auth:
 1. Go to **Tools** > **Add a tool** > **MCP**
 2. Under **Authentication**, select **API key**
 3. Set **Type** to **Header**
-4. Set **Header name** to `api-key` (or whatever you set in `MCP_API_KEY_HEADER`)
+4. Set **Header name** to `contoso-hr-demo-2026` (or whatever you set in `MCP_API_KEY_HEADER`)
 5. Paste your API key value (must match `MCP_API_KEY`)
 
+> **Important:** Copilot Studio uses the header name field as the actual HTTP header name. The value you type in the "Header name" field becomes the header key in the request. Make sure it matches exactly.
+
 The health endpoint (`/health`) is always open, so you can verify the server is running without auth.
+
+---
+
+## Folder Structure
+
+After cloning and running, your project looks like this:
+
+```
+powerplatform-solution-mcp/
+├── solutions/                  <-- DROP YOUR ZIP FILES HERE
+│   ├── .gitkeep
+│   └── MySolution_1_0_0_1.zip <-- your exported solution
+├── extracted/                  <-- auto-created on startup
+│   └── MySolution_1_0_0_1/    <-- auto-extracted from ZIP
+│       ├── solution.xml
+│       ├── customizations.xml
+│       ├── [Content_Types].xml
+│       ├── Workflows/          <-- Cloud Flows, Business Rules
+│       ├── botcomponents/      <-- Copilot Studio topics, actions, prompts
+│       ├── bots/               <-- Bot definitions
+│       ├── Assets/             <-- Bot-connector mappings
+│       ├── WebResources/       <-- HTML, JS, CSS, images
+│       ├── CanvasApps/         <-- .msapp files
+│       ├── PluginAssemblies/   <-- .dll files
+│       ├── Connectors/         <-- Custom connector definitions
+│       ├── environmentvariabledefinitions/
+│       └── ...                 <-- 30+ possible component folders
+├── src/
+│   └── index.ts               <-- THE server (single file, ~1100 lines)
+├── package.json
+├── tsconfig.json
+└── .gitignore
+```
 
 ---
 
@@ -541,12 +521,19 @@ The ZIP doesn't contain a `solution.xml` at the root. This means it's not a Powe
 - Check the server URL ends with `/mcp` (not `/health`, not just the domain)
 - Verify the tunnel is working: open `https://<tunnel-url>/health` in your browser
 - Make sure you selected **Model Context Protocol** (not REST API or OpenAPI) when adding the tool
+- If using API key auth, verify the header name and key match exactly
 
 ### Copilot Studio discovers tools but doesn't use them
 
 - Enable **Generative orchestration** in your agent's settings
 - Make sure the tools are enabled (checkboxes in the Tools panel)
-- Try being explicit: *"Use the list_flows tool to show me all flows"*
+- Try being explicit: *"Use the list_components tool to show me all flows"*
+
+### 401 Unauthorized
+
+- Verify your API key matches `MCP_API_KEY`
+- Verify the header name in Copilot Studio matches `MCP_API_KEY_HEADER` exactly
+- The health endpoint (`/health`) bypasses auth, so you can always check if the server is running
 
 ---
 
@@ -557,19 +544,19 @@ The ZIP doesn't contain a `solution.xml` at the root. This means it's not a Powe
 | **Runtime** | Node.js 18+ (ES2022) |
 | **MCP SDK** | `@modelcontextprotocol/sdk` (Streamable HTTP transport) |
 | **Validation** | `zod` |
-| **XML parsing** | Regex-based (no external parser — PP solution XMLs are predictable) |
-| **Transport** | Stateless Streamable HTTP (one `McpServer` per request — required by Copilot Studio) |
+| **XML parsing** | Regex-based (no external parser -- PP solution XMLs are predictable) |
+| **Transport** | Stateless Streamable HTTP (one `McpServer` per request -- required by Copilot Studio) |
 | **Platforms** | Windows, Mac, Linux |
 
 ---
 
 ## Contributing
 
-PRs welcome. The server is a single file (`src/index.ts`) — easy to read, easy to extend.
+PRs welcome. The server is a single file (`src/index.ts`) -- easy to read, easy to extend.
 
 To add support for a new component type:
 1. Add a parser function (follow the pattern of existing parsers)
-2. Register a new tool in `createMcpServer()`
+2. Add a new enum value to the `list_components` handler in `createMcpServer()`
 3. Optionally add a resource for automatic context
 
 ---

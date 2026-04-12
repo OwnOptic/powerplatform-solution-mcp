@@ -106,7 +106,7 @@ You'll see output like:
   Drop .zip files into /path/to/solutions and restart.
 ```
 
-**That's it.** The server auto-extracts every ZIP, validates it's a real Power Platform solution (checks for `solution.xml`), and exposes 9 tools + dynamic resources.
+**That's it.** The server auto-extracts every ZIP, validates it's a real Power Platform solution (checks for `solution.xml`), and exposes 13 tools + dynamic resources.
 
 ### Step 5: Verify it works
 
@@ -148,7 +148,7 @@ You should see:
           ▼
 ┌─────────────────────┐
 │  4. CONNECT CLIENT   │    Copilot Studio, Claude Desktop, or any MCP client
-│     via /mcp         │    > discovers 9 tools + resources
+│     via /mcp         │    > discovers 13 tools + resources
 │     endpoint         │    > user asks questions in natural language
 └─────────────────────┘
 ```
@@ -158,8 +158,8 @@ You should see:
 ```
 ┌─────────────────┐     ┌──────────────────────────┐     ┌──────────────────┐
 │  Copilot Studio │────>│  Streamable HTTP (POST)  │────>│  MCP Server      │
-│  Claude Desktop │     │  /mcp endpoint           │     │  9 tools         │
-│  Any MCP Client │     │  Port 3001               │     │  15 component    │
+│  Claude Desktop │     │  /mcp endpoint           │     │  13 tools         │
+│  Any MCP Client │     │  Port 3001               │     │  17 component    │
 └─────────────────┘     └──────────────────────────┘     │  types via enum  │
                                                          └────────┬─────────┘
                                                                   │
@@ -178,7 +178,7 @@ You should see:
 ### Key Design Decisions
 
 - **Stateless factory pattern** -- each HTTP POST creates a fresh `McpServer` instance. This is required for Copilot Studio's Streamable HTTP transport.
-- **9 tools instead of 27** -- consolidated using enum parameters. `list_components` handles 15 component types through a single `component_type` enum, making it much easier for LLMs to pick the right tool.
+- **13 tools instead of 27** -- consolidated using enum parameters. `list_components` handles 17 component types through a single `component_type` enum, making it much easier for LLMs to pick the right tool.
 - **Zero external dependencies** beyond `@modelcontextprotocol/sdk` and `zod`. XML parsing uses regex (Power Platform solution XMLs are well-structured and predictable).
 - **Auto-extract on startup** -- drop ZIPs in `solutions/`, start server, done. Invalid ZIPs (no `solution.xml`) are automatically cleaned up.
 - **Cross-platform** -- works on Windows (PowerShell `Expand-Archive`), Mac, and Linux (`unzip`).
@@ -255,7 +255,7 @@ Your MCP endpoint is: `https://abc123-3001.euw.devtunnels.ms/mcp`
    - **Authentication:** API Key (Header type)
    - **Header name:** `contoso-hr-demo-2026` (or your custom `MCP_API_KEY_HEADER`)
    - **API key value:** `sol-explorer-2026` (or your custom `MCP_API_KEY`)
-6. Click **Next** -- Copilot Studio will connect and discover all 9 tools
+6. Click **Next** -- Copilot Studio will connect and discover all 13 tools
 7. Select which tools to enable (recommend: enable all)
 8. Click **Add**
 

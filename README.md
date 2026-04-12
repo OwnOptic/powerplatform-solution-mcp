@@ -280,6 +280,14 @@ In the Copilot Studio test pane, ask:
 | *"What connectors does it use?"* | Calls `list_components(component_type=connectors)` |
 | *"Search for anything about email"* | Calls `search_solution` > full-text search across all files |
 | *"Give me everything about this solution"* | Calls `load_solution_context` > full context in one call |
+| *"Show me the bot tree"* | Calls `get_bot_tree` > multi-bot component mapping |
+| *"Validate this solution"* | Calls `validate_solution` > checks for common issues |
+| *"Compare solution A and B"* | Calls `compare_solutions` > file-level and semantic diff |
+| *"Show dependencies"* | Calls `get_dependency_graph` > bot/connector/entity/flow relationships |
+
+<p align="center">
+  <img src="docs/copilot-studio-test.png" alt="Copilot Studio testing the Solution Explorer MCP - querying Personal Intern WorkIQ solution" width="800" />
+</p>
 
 ---
 

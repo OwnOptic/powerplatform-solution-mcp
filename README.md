@@ -100,7 +100,7 @@ You'll see output like:
   MCP endpoint:    http://localhost:3001/mcp
   Health check:    http://localhost:3001/health
   Auth:            API key via "contoso-hr-demo-2026" header
-  Tools:           9
+  Tools:           13
   Solutions:       MySolution_1_0_0_1
 
   Drop .zip files into /path/to/solutions and restart.

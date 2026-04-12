@@ -118,6 +118,45 @@ function xmlTagBoth(xml: string, tag: string): string[] {
   return [...full, ...self.filter((s) => !seen.has(s))];
 }
 
+// ── YAML Helpers ───────────────────────────────────────────────────
+function extractYamlInstructions(yamlData: string): string {
+  const lines = yamlData.split("\n");
+  const instrIdx = lines.findIndex((l) => /^instructions:\s/.test(l) || l.trim() === "instructions:");
+  if (instrIdx < 0) return "";
+  const instrLine = lines[instrIdx];
+  // Check for inline value (instructions: "some text")
+  const inlineMatch = instrLine.match(/^instructions:\s*["'](.*)["']\s*$/);
+  if (inlineMatch) return inlineMatch[1];
+  // Check for block scalar (instructions: |- or instructions: |)
+  const blockMatch = instrLine.match(/^instructions:\s*([|>][+-]?)\s*$/);
+  if (!blockMatch && instrLine.trim() !== "instructions:") {
+    // Simple inline without quotes
+    const simple = instrLine.replace(/^instructions:\s*/, "").trim();
+    if (simple) return simple;
+  }
+  // Read indented block below
+  const blockLines: string[] = [];
+  for (let i = instrIdx + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.trim() === "") { blockLines.push(""); continue; }
+    if (/^\S/.test(line)) break; // Non-indented line = end of block
+    blockLines.push(line);
+  }
+  if (!blockLines.length) return "";
+  // Find common indent and strip it
+  const nonEmpty = blockLines.filter((l) => l.trim());
+  if (!nonEmpty.length) return "";
+  const minIndent = Math.min(...nonEmpty.map((l) => l.match(/^(\s*)/)?.[1].length || 0));
+  return blockLines.map((l) => (l.trim() ? l.substring(minIndent) : "")).join("\n").trim();
+}
+
+// ── System Topic Names (all 14 required) ───────────────────────────
+const SYSTEM_TOPIC_NAMES = new Set([
+  "ConversationStart", "EndofConversation", "Escalate", "Fallback",
+  "Goodbye", "Greeting", "MultipleTopicsMatched", "OnError",
+  "ResetConversation", "Search", "Signin", "StartOver", "ThankYou", "Untitled",
+]);
+
 // ── File system helpers ─────────────────────────────────────────────
 function listSolutionDirs(): string[] {
   if (!existsSync(EXTRACTED_DIR)) return [];
@@ -231,7 +270,8 @@ function parseBotComponents(solDir: string) {
   return listSubDirs(bcDir).map((folder) => {
     let type = "unknown";
     let name = folder;
-    if (folder.includes(".topic.")) { type = "topic"; name = folder.split(".topic.")[1] || folder; }
+    if (folder.includes(".InvokeConnectedAgentTaskAction.")) { type = "sub_agent_delegation"; name = folder.split(".InvokeConnectedAgentTaskAction.")[1] || folder; }
+    else if (folder.includes(".topic.")) { type = "topic"; name = folder.split(".topic.")[1] || folder; }
     else if (folder.includes(".action.")) { type = "action"; name = folder.split(".action.")[1] || folder; }
     else if (folder.includes(".ExternalTriggerComponent.")) { type = "trigger"; name = folder.split(".ExternalTriggerComponent.")[1]?.split(".")[0] || folder; }
     else if (folder.includes(".gpt.")) { type = "gpt"; name = "GPT / System Prompt"; }
@@ -244,8 +284,99 @@ function parseBotComponents(solDir: string) {
     else if (folder.includes(".settings.")) { type = "settings"; name = "Copilot AI Settings"; }
     else if (folder.includes(".testcase.")) { type = "testcase"; name = folder.split(".testcase.")[1] || folder; }
     else if (folder.includes(".translations.")) { type = "translations"; name = folder.split(".translations.")[1] || folder; }
-    return { folder, schemaName: folder, type, name, hasData: existsSync(join(bcDir, folder, "data")) };
+    // Read botcomponent.xml for parentbotid and componenttype
+    const bcXml = readSolFile(solDir, "botcomponents", folder, "botcomponent.xml");
+    const parentBot = bcXml ? xmlTag(xmlTag(bcXml, "parentbotid"), "schemaname") : "";
+    const componentType = bcXml ? xmlTag(bcXml, "componenttype") : "";
+    return { folder, schemaName: folder, type, name, hasData: existsSync(join(bcDir, folder, "data")), parentBot, componentType };
   });
+}
+
+function parseBots(solDir: string) {
+  const botsDir = solPath(solDir, "bots");
+  if (!existsSync(botsDir)) return [];
+  return listSubDirs(botsDir).map((folder) => {
+    const botXml = readSolFile(solDir, "bots", folder, "bot.xml");
+    const configJson = readSolJson(solDir, "bots", folder, "configuration.json");
+    if (!botXml) return null;
+    const schemaName = xmlAttr(botXml, "schemaname") || folder;
+    const displayName = xmlTag(botXml, "name") || folder;
+    const authMode = xmlTag(botXml, "authenticationmode");
+    const authConfig = xmlTag(botXml, "authenticationconfiguration");
+    const authTrigger = xmlTag(botXml, "authenticationtrigger");
+    const language = xmlTag(botXml, "language");
+    const template = xmlTag(botXml, "template");
+    const iconBase64 = xmlTag(botXml, "iconbase64");
+    const syncStatus = xmlTag(botXml, "synchronizationstatus");
+    const tzRule = xmlTag(botXml, "timezoneruleversionnumber");
+    return {
+      folder, schemaName, displayName,
+      authenticationmode: authMode, authenticationconfiguration: authConfig,
+      authenticationtrigger: authTrigger,
+      language, template,
+      hasIcon: !!iconBase64 && iconBase64.length > 10,
+      synchronizationstatus: syncStatus,
+      timezoneruleversionnumber: tzRule,
+      config: configJson,
+    };
+  }).filter(Boolean) as Array<{
+    folder: string; schemaName: string; displayName: string;
+    authenticationmode: string; authenticationconfiguration: string;
+    authenticationtrigger: string; language: string; template: string;
+    hasIcon: boolean; synchronizationstatus: string; timezoneruleversionnumber: string;
+    config: any;
+  }>;
+}
+
+function parseSubAgentDelegations(solDir: string) {
+  const comps = parseBotComponents(solDir).filter((c) => c.type === "sub_agent_delegation");
+  return comps.map((c) => {
+    const data = getBotComponentData(solDir, c.folder);
+    let targetBot = "";
+    let displayName = c.name;
+    let description = "";
+    if (data) {
+      const botMatch = data.match(/botSchemaName:\s*["']?([^\s"']+)/);
+      if (botMatch) targetBot = botMatch[1];
+      const dnMatch = data.match(/modelDisplayName:\s*(.+)/);
+      if (dnMatch) displayName = dnMatch[1].trim();
+      const descMatch = data.match(/modelDescription:\s*(.+)/);
+      if (descMatch) description = descMatch[1].trim();
+    }
+    return { parentBot: c.parentBot, targetBot, displayName, description, folder: c.folder };
+  });
+}
+
+function buildBotComponentTree(solDir: string) {
+  const bots = parseBots(solDir);
+  const components = parseBotComponents(solDir);
+  const delegations = parseSubAgentDelegations(solDir);
+  const tree = bots.map((bot) => {
+    const botComps = components.filter((c) => c.parentBot === bot.schemaName);
+    const topics = botComps.filter((c) => c.type === "topic");
+    const systemTopics = topics.filter((t) => SYSTEM_TOPIC_NAMES.has(t.name));
+    const customTopics = topics.filter((t) => !SYSTEM_TOPIC_NAMES.has(t.name));
+    const actions = botComps.filter((c) => c.type === "action");
+    const gpt = botComps.find((c) => c.type === "gpt");
+    const triggers = botComps.filter((c) => c.type === "trigger");
+    const subAgentDelegations = delegations.filter((d) => d.parentBot === bot.schemaName);
+    const knowledgeSources = botComps.filter((c) => c.type === "knowledge_source" || c.type === "knowledge_file");
+    const other = botComps.filter((c) => !["topic", "action", "gpt", "trigger", "sub_agent_delegation", "knowledge_source", "knowledge_file"].includes(c.type));
+    return {
+      schemaName: bot.schemaName, displayName: bot.displayName,
+      authenticationmode: bot.authenticationmode, hasIcon: bot.hasIcon,
+      topics: { system: systemTopics.map((t) => t.name), custom: customTopics.map((t) => ({ name: t.name, folder: t.folder })) },
+      actions: actions.map((a) => ({ name: a.name, folder: a.folder })),
+      gpt: gpt ? { folder: gpt.folder } : null,
+      triggers: triggers.map((t) => ({ name: t.name, folder: t.folder })),
+      subAgentDelegations: subAgentDelegations.map((d) => ({ targetBot: d.targetBot, displayName: d.displayName, description: d.description })),
+      knowledgeSources: knowledgeSources.map((k) => ({ type: k.type, name: k.name, folder: k.folder })),
+      other: other.map((o) => ({ type: o.type, name: o.name, folder: o.folder })),
+      totalComponents: botComps.length,
+    };
+  });
+  const orphans = components.filter((c) => c.parentBot && !bots.some((b) => b.schemaName === c.parentBot));
+  return { bots: tree, orphanComponents: orphans.map((o) => ({ type: o.type, name: o.name, folder: o.folder, parentBot: o.parentBot })) };
 }
 
 function getBotComponentData(solDir: string, folder: string): string | null {
@@ -293,7 +424,9 @@ function parseEntities(solDir: string) {
       const attrDisplay = xmlAttr(attrDisplayNames.find((d) => d.includes('languagecode="1033"')) || "", "description") || attrName;
       const attrType = xmlTag(a, "Type") || xmlAttr(a, "Type") || "";
       const required = xmlTag(a, "RequiredLevel") || "";
-      return { name: attrName, displayName: attrDisplay, type: attrType, required };
+      const format = xmlTag(a, "Format") || "";
+      const maxLength = xmlTag(a, "MaxLength") || "";
+      return { name: attrName, displayName: attrDisplay, type: attrType, required, format, maxLength };
     }).filter(a => a.name);
     // Parse relationships
     const oneToMany = xmlTagAll(e, "OneToManyRelationship").map((r) => ({
@@ -314,7 +447,7 @@ function parseEntities(solDir: string) {
       attributes: xmlTagAll(k, "EntityKeyAttribute").map(ka => xmlTag(ka, "AttributeName") || ka.replace(/<[^>]+>/g, "").trim()),
     })).filter(k => k.name);
     return { name, displayName, formCount, viewCount, chartCount, hasRibbon, attributeCount: attributes.length, attributes, relationships: { oneToMany, manyToMany }, keys };
-  });
+  }).filter(e => e.name);
 }
 
 function getEntitySchema(solDir: string, entityName: string) {
@@ -530,7 +663,7 @@ function detectFolders(solDir: string) {
     ServiceEndpoints: "Service Endpoints (Webhooks)",
     SdkMessageProcessingSteps: "SDK Message Processing Steps",
     EntityRelationships: "N:N Relationships", ConnectionRoles: "Connection Roles",
-    appactions: "App Actions", pluginpackages: "Plugin Packages (NuGet)",
+    appactions: "App Actions",
     ImportMaps: "Import Maps", SLAs: "SLAs",
     RoutingRules: "Routing Rules", ConvertRules: "Convert Rules",
   };
@@ -541,6 +674,246 @@ function detectFolders(solDir: string) {
     folders: folders.map((f) => ({ name: f, description: known[f] || "Unknown component folder" })),
     rootFiles: files,
   };
+}
+
+// ── Validation ─────────────────────────────────────────────────────
+function validateSolution(solDir: string): Array<{ severity: "error" | "warning" | "info"; rule: string; message: string }> {
+  const issues: Array<{ severity: "error" | "warning" | "info"; rule: string; message: string }> = [];
+  const bots = parseBots(solDir);
+  const components = parseBotComponents(solDir);
+  const actions = components.filter((c) => c.type === "action");
+  const connectors = parseConnectors(solDir);
+
+  for (const bot of bots) {
+    // Rule 1: Missing system topics
+    const botTopics = components.filter((c) => c.parentBot === bot.schemaName && c.type === "topic");
+    const topicNames = new Set(botTopics.map((t) => t.name));
+    for (const required of SYSTEM_TOPIC_NAMES) {
+      if (!topicNames.has(required)) {
+        issues.push({ severity: "warning", rule: "missing_system_topic", message: `Bot "${bot.displayName}": missing system topic "${required}"` });
+      }
+    }
+    // Rule 2: Empty iconbase64
+    if (!bot.hasIcon) {
+      issues.push({ severity: "warning", rule: "empty_icon", message: `Bot "${bot.displayName}": empty or missing iconbase64 - bot may not register` });
+    }
+    // Rule 3: Wrong authenticationmode
+    if (bot.authenticationmode && bot.authenticationmode !== "1") {
+      issues.push({ severity: "error", rule: "wrong_auth_mode", message: `Bot "${bot.displayName}": authenticationmode is ${bot.authenticationmode}, should be 1` });
+    }
+    // Rule 4: Missing authenticationconfiguration
+    if (!bot.authenticationconfiguration) {
+      issues.push({ severity: "error", rule: "missing_auth_config", message: `Bot "${bot.displayName}": missing authenticationconfiguration` });
+    }
+    // Rule 5: Missing/empty synchronizationstatus
+    if (!bot.synchronizationstatus) {
+      issues.push({ severity: "warning", rule: "empty_sync_status", message: `Bot "${bot.displayName}": empty synchronizationstatus - bot may not provision` });
+    }
+    // Rule 6: Missing timezoneruleversionnumber
+    if (!bot.timezoneruleversionnumber) {
+      issues.push({ severity: "warning", rule: "missing_timezone", message: `Bot "${bot.displayName}": missing timezoneruleversionnumber` });
+    }
+  }
+
+  // Rule 7: Missing botcomponent_connectionreferenceset.xml
+  if (actions.length > 0) {
+    const hasRefSet = existsSync(solPath(solDir, "Assets", "botcomponent_connectionreferenceset.xml"));
+    if (!hasRefSet) {
+      issues.push({ severity: "error", rule: "missing_connection_ref_set", message: `Solution has ${actions.length} action(s) but missing Assets/botcomponent_connectionreferenceset.xml` });
+    }
+  }
+
+  // Rule 8: Missing connectionreferences in customizations.xml
+  if (actions.length > 0 && connectors.length === 0) {
+    issues.push({ severity: "error", rule: "missing_connection_refs", message: `Solution has ${actions.length} action(s) but no connectionreferences in customizations.xml` });
+  }
+
+  // Rule 9: Action naming convention
+  const solInfo = parseSolutionXml(solDir);
+  const prefix = solInfo?.publisher?.prefix || "";
+  if (prefix) {
+    for (const action of actions) {
+      if (!action.folder.startsWith(`${prefix}_`)) {
+        issues.push({ severity: "warning", rule: "action_naming", message: `Action "${action.name}" folder "${action.folder}" doesn't start with publisher prefix "${prefix}_"` });
+      }
+    }
+  }
+
+  // Rule 10: RootComponent entries for entities
+  const entities = parseEntities(solDir);
+  if (entities.length > 0 && solInfo) {
+    const rootSchemas = new Set(solInfo.rootComponents.filter((r) => r.type === 1).map((r) => r.schemaName.toLowerCase()));
+    for (const entity of entities) {
+      if (!entity.name) continue;
+      const entityLogical = entity.name.toLowerCase();
+      if (!rootSchemas.has(entityLogical)) {
+        issues.push({ severity: "warning", rule: "missing_root_component", message: `Entity "${entity.displayName}" (${entity.name}) has no RootComponent entry (type=1) in solution.xml` });
+      }
+    }
+  }
+
+  return issues;
+}
+
+// ── Solution Comparison ────────────────────────────────────────────
+function compareSolutions(solDirA: string, solDirB: string) {
+  const filesA = new Map<string, string>();
+  const filesB = new Map<string, string>();
+
+  function walkDir(dir: string, map: Map<string, string>, baseLen: number) {
+    if (!existsSync(dir)) return;
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry);
+      const rel = full.substring(baseLen).replace(/\\/g, "/");
+      const stat = statSync(full);
+      if (stat.isDirectory()) walkDir(full, map, baseLen);
+      else if (stat.isFile() && stat.size < 500_000) {
+        try { map.set(rel, readFileSync(full, "utf-8")); } catch {}
+      }
+    }
+  }
+
+  const pathA = solPath(solDirA);
+  const pathB = solPath(solDirB);
+  const lenA = pathA.length + 1; // +1 for trailing separator
+  const lenB = pathB.length + 1;
+  walkDir(pathA, filesA, lenA);
+  walkDir(pathB, filesB, lenB);
+
+  const added = [...filesB.keys()].filter((f) => !filesA.has(f));
+  const removed = [...filesA.keys()].filter((f) => !filesB.has(f));
+  const changed: Array<{ path: string; detail: string }> = [];
+  const unchanged: string[] = [];
+
+  for (const [path, contentA] of filesA) {
+    if (!filesB.has(path)) continue;
+    const contentB = filesB.get(path)!;
+    if (contentA === contentB) { unchanged.push(path); continue; }
+    let detail = "content changed";
+    if (path === "solution.xml") {
+      const vA = xmlTag(contentA, "Version");
+      const vB = xmlTag(contentB, "Version");
+      if (vA !== vB) detail = `version ${vA} -> ${vB}`;
+    }
+    changed.push({ path, detail });
+  }
+
+  const infoA = parseSolutionXml(solDirA);
+  const infoB = parseSolutionXml(solDirB);
+
+  // Semantic component diff
+  const compsA = parseBotComponents(solDirA);
+  const compsB = parseBotComponents(solDirB);
+  const compNamesA = new Set(compsA.map((c) => c.folder));
+  const compNamesB = new Set(compsB.map((c) => c.folder));
+
+  return {
+    summary: { added: added.length, removed: removed.length, changed: changed.length, unchanged: unchanged.length },
+    solutionA: { folder: solDirA, name: infoA?.displayName || solDirA, version: infoA?.version || "?" },
+    solutionB: { folder: solDirB, name: infoB?.displayName || solDirB, version: infoB?.version || "?" },
+    files: { added, removed, changed },
+    componentDiff: {
+      added: [...compNamesB].filter((n) => !compNamesA.has(n)),
+      removed: [...compNamesA].filter((n) => !compNamesB.has(n)),
+    },
+  };
+}
+
+// ── Dependency Graph ───────────────────────────────────────────────
+function buildDependencyGraph(solDir: string) {
+  const nodes: Array<{ id: string; type: string; label: string }> = [];
+  const edges: Array<{ from: string; to: string; type: string }> = [];
+  const nodeIds = new Set<string>();
+
+  function addNode(id: string, type: string, label: string) {
+    if (nodeIds.has(id)) return;
+    nodeIds.add(id);
+    nodes.push({ id, type, label });
+  }
+
+  const bots = parseBots(solDir);
+  const delegations = parseSubAgentDelegations(solDir);
+  const connectors = parseConnectors(solDir);
+  const botConnRefs = parseBotConnectionRefs(solDir);
+  const entities = parseEntities(solDir);
+  const flows = parseFlows(solDir);
+  const components = parseBotComponents(solDir);
+
+  // Add bot nodes
+  for (const bot of bots) {
+    addNode(`bot:${bot.schemaName}`, "bot", bot.displayName);
+  }
+
+  // Bot -> sub-agent edges
+  for (const d of delegations) {
+    if (d.targetBot) {
+      addNode(`bot:${d.targetBot}`, "bot", d.displayName);
+      edges.push({ from: `bot:${d.parentBot}`, to: `bot:${d.targetBot}`, type: "delegates_to" });
+    }
+  }
+
+  // Bot -> connector edges via action connection refs
+  for (const ref of botConnRefs) {
+    // Extract connector type from logical name like "prefix_Bot.shared_commondataserviceforapps.guid"
+    const parts = ref.connector.split(".");
+    const sharedPart = parts.find((p) => p.startsWith("shared_")) || parts.pop() || ref.connector;
+    const connName = sharedPart;
+    const connId = `connector:${connName}`;
+    addNode(connId, "connector", connName);
+    // Find which bot owns this action
+    const actionComp = components.find((c) => c.folder === ref.action);
+    if (actionComp?.parentBot) {
+      edges.push({ from: `bot:${actionComp.parentBot}`, to: connId, type: "uses_connector" });
+    }
+  }
+
+  // Add connector nodes from connection references
+  for (const conn of connectors) {
+    const connId = `connector:${conn.connector}`;
+    addNode(connId, "connector", conn.connector);
+  }
+
+  // Entity nodes (skip empty names)
+  for (const entity of entities) {
+    if (!entity.name) continue;
+    addNode(`entity:${entity.name}`, "entity", entity.displayName);
+    // If any connector is shared_commondataserviceforapps, link bots that use it to entities
+    for (const ref of botConnRefs) {
+      if (ref.connector.includes("commondataserviceforapps")) {
+        const actionComp = components.find((c) => c.folder === ref.action);
+        if (actionComp?.parentBot) {
+          edges.push({ from: `bot:${actionComp.parentBot}`, to: `entity:${entity.name}`, type: "accesses_entity" });
+        }
+      }
+    }
+  }
+
+  // Flow nodes and edges
+  for (const flow of flows) {
+    const flowId = `flow:${flow.name}`;
+    addNode(flowId, "flow", flow.name);
+    // Check if flow references any bot schema name
+    const flowDef = getFlowDefinition(solDir, flow.jsonFile);
+    if (flowDef) {
+      const flowStr = JSON.stringify(flowDef);
+      for (const bot of bots) {
+        if (flowStr.includes(bot.schemaName)) {
+          edges.push({ from: flowId, to: `bot:${bot.schemaName}`, type: "triggers_bot" });
+        }
+      }
+    }
+  }
+
+  // Deduplicate edges
+  const edgeSet = new Set<string>();
+  const uniqueEdges = edges.filter((e) => {
+    const key = `${e.from}|${e.to}|${e.type}`;
+    if (edgeSet.has(key)) return false;
+    edgeSet.add(key);
+    return true;
+  });
+
+  return { nodes, edges: uniqueEdges };
 }
 
 // ── Comprehensive Summary ───────────────────────────────────────────
@@ -570,10 +943,7 @@ function summarizeSolution(solDir: string): string {
   let systemPrompt = "";
   if (gpt) {
     const data = getBotComponentData(solDir, gpt.folder);
-    if (data) {
-      const m = data.match(/instructions:\s*\|?\-?\s*\n([\s\S]*?)(?=\n\w+:|$)/);
-      if (m) systemPrompt = m[1].trim();
-    }
+    if (data) systemPrompt = extractYamlInstructions(data);
   }
 
   const L: string[] = [];
@@ -632,7 +1002,7 @@ function summarizeSolution(solDir: string): string {
 
 // ── MCP Server Factory ──────────────────────────────────────────────
 function createMcpServer(): McpServer {
-  const server = new McpServer({ name: "Power Platform Solution Explorer", version: "2.0.0" });
+  const server = new McpServer({ name: "Power Platform Solution Explorer", version: "3.0.0" });
   const solParam = { solution: z.string().describe("Solution folder name (e.g. DEMOPersonalAssistant)") };
 
   // ── Tool 1: list_solutions ──
@@ -663,17 +1033,18 @@ function createMcpServer(): McpServer {
 
   // ── Tool 4: list_components ──
   const componentTypeEnum = z.enum([
-    "flows", "bot_topics", "bot_actions", "connectors", "custom_connectors",
+    "bots", "flows", "bot_topics", "bot_actions", "connectors", "custom_connectors",
     "external_triggers", "entities", "security_roles", "web_resources",
     "canvas_apps", "environment_variables", "plugins", "model_driven_apps",
-    "option_sets", "knowledge_sources"
+    "option_sets", "knowledge_sources", "sub_agent_delegations"
   ]).describe("Type of component to list");
 
   server.tool("list_components",
-    "List components of a specific type: flows, bot_topics, bot_actions, connectors, custom_connectors, external_triggers, entities, security_roles, web_resources, canvas_apps, environment_variables, plugins, model_driven_apps, option_sets, knowledge_sources",
+    "List components of a specific type: bots, flows, bot_topics, bot_actions, connectors, custom_connectors, external_triggers, entities, security_roles, web_resources, canvas_apps, environment_variables, plugins, model_driven_apps, option_sets, knowledge_sources, sub_agent_delegations",
     { ...solParam, component_type: componentTypeEnum },
     async ({ solution, component_type }) => {
       const handlers: Record<string, () => any> = {
+        bots: () => parseBots(solution),
         flows: () => parseFlows(solution),
         bot_topics: () => parseBotComponents(solution).filter((c) => c.type === "topic"),
         bot_actions: () => {
@@ -708,6 +1079,7 @@ function createMcpServer(): McpServer {
         model_driven_apps: () => parseAppModules(solution),
         option_sets: () => parseOptionSets(solution),
         knowledge_sources: () => parseKnowledgeSources(solution),
+        sub_agent_delegations: () => parseSubAgentDelegations(solution),
       };
       const result = handlers[component_type]();
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
@@ -816,15 +1188,33 @@ function createMcpServer(): McpServer {
         for (const [t, c] of typeCounts) sections.push(`- ${t}: ${c}`);
       }
 
-      // ── Agent System Prompt (FULL, untruncated) ──
-      const botComps = parseBotComponents(solDir);
-      const gpt = botComps.find((c) => c.type === "gpt");
-      if (gpt) {
-        const data = getBotComponentData(solDir, gpt.folder);
-        if (data) {
-          sections.push(`\n## Agent System Prompt (full)`);
-          sections.push(data);
+      // ── Bots (multi-bot aware) ──
+      const botTree = buildBotComponentTree(solDir);
+      if (botTree.bots.length) {
+        sections.push(`\n## Bots (${botTree.bots.length})`);
+        for (const bot of botTree.bots) {
+          sections.push(`\n### ${bot.displayName} (${bot.schemaName})`);
+          sections.push(`- Topics: ${bot.topics.system.length} system, ${bot.topics.custom.length} custom${bot.topics.custom.length ? ` (${bot.topics.custom.map((t) => t.name).join(", ")})` : ""}`);
+          if (bot.actions.length) sections.push(`- Actions: ${bot.actions.map((a) => a.name).join(", ")}`);
+          if (bot.subAgentDelegations.length) sections.push(`- Delegates to: ${bot.subAgentDelegations.map((d) => `${d.displayName} (${d.targetBot})`).join(", ")}`);
+          if (bot.knowledgeSources.length) sections.push(`- Knowledge: ${bot.knowledgeSources.map((k) => `[${k.type}] ${k.name}`).join(", ")}`);
+          if (bot.other.length) sections.push(`- Other: ${bot.other.map((o) => `[${o.type}] ${o.name}`).join(", ")}`);
+          // Include full system prompt for each bot
+          if (bot.gpt) {
+            const data = getBotComponentData(solDir, bot.gpt.folder);
+            if (data) {
+              sections.push(`\n#### System Prompt`);
+              sections.push(data);
+            }
+          }
         }
+      }
+
+      // ── Sub-Agent Delegations ──
+      const delegations = parseSubAgentDelegations(solDir);
+      if (delegations.length) {
+        sections.push(`\n## Sub-Agent Delegations (${delegations.length})`);
+        for (const d of delegations) sections.push(`- ${d.parentBot} delegates to ${d.targetBot} (${d.displayName}: ${d.description})`);
       }
 
       // ── Flows with full action details ──
@@ -840,7 +1230,7 @@ function createMcpServer(): McpServer {
             if (!("error" in desc)) {
               if (desc.triggers?.length) {
                 const t = desc.triggers[0];
-                sections.push(`Trigger: ${t.type}${t.operationId ? " — " + t.operationId : ""}${t.connector ? " via " + t.connector : ""}`);
+                sections.push(`Trigger: ${t.type}${t.operationId ? " - " + t.operationId : ""}${t.connector ? " via " + t.connector : ""}`);
               }
               if (desc.actions?.length) {
                 sections.push(`Actions (${desc.actions.length}):`);
@@ -850,34 +1240,6 @@ function createMcpServer(): McpServer {
             }
           }
         }
-      }
-
-      // ── Bot Components ──
-      const topics = botComps.filter((c) => c.type === "topic");
-      const actions = botComps.filter((c) => c.type === "action");
-      const triggers = botComps.filter((c) => c.type === "trigger");
-      const knowledgeComps = botComps.filter((c) => c.type === "knowledge_source" || c.type === "knowledge_file");
-      const others = botComps.filter((c) => !["topic", "action", "trigger", "gpt", "knowledge_source", "knowledge_file"].includes(c.type));
-
-      if (topics.length) {
-        sections.push(`\n## Bot Topics (${topics.length})`);
-        for (const t of topics) sections.push(`- ${t.name} (${t.folder})`);
-      }
-      if (actions.length) {
-        sections.push(`\n## Bot Actions (${actions.length})`);
-        for (const a of actions) sections.push(`- ${a.name} (${a.folder})`);
-      }
-      if (triggers.length) {
-        sections.push(`\n## External Triggers (${triggers.length})`);
-        for (const t of triggers) sections.push(`- ${t.name} (${t.folder})`);
-      }
-      if (knowledgeComps.length) {
-        sections.push(`\n## Knowledge Sources (${knowledgeComps.length})`);
-        for (const k of knowledgeComps) sections.push(`- [${k.type}] ${k.name} (${k.folder})`);
-      }
-      if (others.length) {
-        sections.push(`\n## Other Bot Components (${others.length})`);
-        for (const o of others) sections.push(`- [${o.type}] ${o.name}`);
       }
 
       // ── Connectors ──
@@ -901,7 +1263,7 @@ function createMcpServer(): McpServer {
       const roles = parseRoles(solDir);
       if (roles.length) {
         sections.push(`\n## Security Roles (${roles.length})`);
-        for (const r of roles) sections.push(`- ${r.name} (${r.privilegeCount} privileges)`);
+        for (const r of roles) sections.push(`- ${r.name} (${r.privileges} privileges)`);
       }
 
       // ── Environment Variables ──
@@ -944,15 +1306,70 @@ function createMcpServer(): McpServer {
       const optionSets = parseOptionSets(solDir);
       if (optionSets.length) sections.push(`## Global Option Sets: ${optionSets.length}`);
 
+      // ── Validation ──
+      const issues = validateSolution(solDir);
+      const errors = issues.filter((i) => i.severity === "error");
+      const warnings = issues.filter((i) => i.severity === "warning");
+      if (issues.length) {
+        sections.push(`\n## Validation (${errors.length} errors, ${warnings.length} warnings)`);
+        for (const i of errors) sections.push(`- [ERROR] ${i.message}`);
+        for (const i of warnings) sections.push(`- [WARNING] ${i.message}`);
+      }
+
+      // ── Dependency Graph ──
+      const graph = buildDependencyGraph(solDir);
+      if (graph.edges.length) {
+        sections.push(`\n## Dependencies (${graph.nodes.length} nodes, ${graph.edges.length} edges)`);
+        for (const e of graph.edges) sections.push(`- ${e.from} -[${e.type}]-> ${e.to}`);
+      }
+
       // ── Structure ──
       const structure = detectFolders(solDir);
       if (typeof structure === "object" && "folders" in structure) {
         sections.push(`\n## File Structure`);
-        for (const f of structure.folders) sections.push(`- ${f.name}/ — ${f.description}`);
+        for (const f of structure.folders) sections.push(`- ${f.name}/ - ${f.description}`);
       }
 
       const full = sections.join("\n");
       return { content: [{ type: "text", text: full.substring(0, 100000) }] };
+    });
+
+  // ── Tool 10: get_bot_tree ──
+  server.tool("get_bot_tree",
+    "Multi-bot tree: each bot with its system/custom topics, actions, GPT, triggers, sub-agent delegations, and knowledge sources grouped by parent bot",
+    solParam,
+    async ({ solution }) => {
+      const tree = buildBotComponentTree(solution);
+      return { content: [{ type: "text", text: JSON.stringify(tree, null, 2) }] };
+    });
+
+  // ── Tool 11: compare_solutions ──
+  server.tool("compare_solutions",
+    "Diff two extracted solutions: files added/removed/changed, component differences, version changes",
+    { solution_a: z.string().describe("First solution folder name"), solution_b: z.string().describe("Second solution folder name") },
+    async ({ solution_a, solution_b }) => {
+      const result = compareSolutions(solution_a, solution_b);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    });
+
+  // ── Tool 12: validate_solution ──
+  server.tool("validate_solution",
+    "Check solution for common issues: missing system topics, auth config, connection refs, naming conventions, entity root components",
+    solParam,
+    async ({ solution }) => {
+      const issues = validateSolution(solution);
+      const counts = { error: 0, warning: 0, info: 0 };
+      for (const i of issues) counts[i.severity]++;
+      return { content: [{ type: "text", text: JSON.stringify({ summary: counts, issues }, null, 2) }] };
+    });
+
+  // ── Tool 13: get_dependency_graph ──
+  server.tool("get_dependency_graph",
+    "Relationship graph: bot -> sub-agents (delegates_to), bot -> connectors (uses_connector), bot -> entities (accesses_entity), flow -> bots (triggers_bot)",
+    solParam,
+    async ({ solution }) => {
+      const graph = buildDependencyGraph(solution);
+      return { content: [{ type: "text", text: JSON.stringify(graph, null, 2) }] };
     });
 
   // ── MCP Resources ────────────────────────────────────────────────
@@ -1066,7 +1483,7 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
 
   if (req.url === "/" || req.url === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "ok", server: "Power Platform Solution Explorer MCP", version: "2.0.0", tools: 9, solutions: listSolutionDirs() }));
+    res.end(JSON.stringify({ status: "ok", server: "Power Platform Solution Explorer MCP", version: "3.0.0", tools: 13, solutions: listSolutionDirs() }));
     return;
   }
 
@@ -1107,7 +1524,7 @@ httpServer.listen(PORT, () => {
   console.log(`  MCP endpoint:    http://localhost:${PORT}/mcp`);
   console.log(`  Health check:    http://localhost:${PORT}/health`);
   console.log(`  Auth:            ${MCP_API_KEY ? `API key via "${MCP_API_KEY_HEADER}" header` : "none (open access)"}`);
-  console.log(`  Tools:           9`);
+  console.log(`  Tools:           13`);
   console.log(`  Solutions:       ${listSolutionDirs().join(", ") || "none"}`);
   console.log(`\n  Drop .zip files into ${SOLUTIONS_DIR} and restart.\n`);
 });

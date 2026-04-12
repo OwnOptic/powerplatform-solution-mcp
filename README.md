@@ -15,7 +15,7 @@
   <a href="#quickstart">Quickstart</a> &bull;
   <a href="#how-it-works">How It Works</a> &bull;
   <a href="#copilot-studio-integration">Copilot Studio</a> &bull;
-  <a href="#tools">9 Tools</a> &bull;
+  <a href="#tools">13 Tools</a> &bull;
   <a href="#resources">MCP Resources</a> &bull;
   <a href="#troubleshooting">Troubleshooting</a>
 </p>
@@ -285,7 +285,7 @@ In the Copilot Studio test pane, ask:
 
 ## Tools
 
-9 tools that cover every aspect of a Power Platform solution. Every tool accepts a `solution` parameter (the folder name of the extracted solution).
+13 tools that cover every aspect of a Power Platform solution. Every tool accepts a `solution` parameter (the folder name of the extracted solution).
 
 ### Solution Overview
 
@@ -305,12 +305,14 @@ The `component_type` parameter accepts these values:
 
 | Value | What it returns |
 |---|---|
+| `bots` | Bot definitions with auth config, icon status, language, template |
 | `flows` | Power Automate flows with category, status, trigger type |
-| `bot_topics` | Copilot Studio conversation topics |
+| `bot_topics` | Copilot Studio conversation topics with parent bot mapping |
 | `bot_actions` | Copilot Studio actions with connector mappings |
 | `connectors` | Connection references (Office 365, Outlook, Planner, etc.) |
 | `custom_connectors` | Custom connectors with OpenAPI definition, auth type, operation count |
 | `external_triggers` | Power Automate flow triggers that invoke the agent |
+| `sub_agent_delegations` | Sub-agent invocations (parent bot, target bot, description) |
 | `entities` | Dataverse tables with column, relationship, and key counts |
 | `security_roles` | Security roles with privilege counts |
 | `web_resources` | HTML, JS, CSS, images with file types and sizes |
@@ -333,7 +335,7 @@ The `component_type` parameter accepts:
 |---|---|
 | `flow` | Trigger details, every action in order, connection references, prompts |
 | `entity` | Full Dataverse schema: columns, relationships (1:N, N:N), keys, forms, views |
-| `bot_component` | Raw YAML/JSON data for any bot component by folder name, or `system_prompt` for agent instructions |
+| `bot_component` | Raw YAML/JSON data for any bot component by folder name, or `system_prompt` for agent instructions. Multi-bot: use `system_prompt:BotName` to get a specific bot's prompt, or just `system_prompt` to get all prompts labeled by bot. |
 
 ### Navigation, Search & Raw Access
 
@@ -343,11 +345,30 @@ The `component_type` parameter accepts:
 | `search_solution` | Full-text search across ALL files in the solution (XML, JSON, YAML, everything) |
 | `get_raw_file` | Read any file by relative path (e.g. `solution.xml`, `Workflows/MyFlow.json`) |
 
+### Multi-Bot Analysis
+
+| Tool | Description |
+|---|---|
+| `get_bot_tree` | Multi-bot component tree: each bot with its system topics (14 required), custom topics, actions, GPT config, triggers, sub-agent delegations, and knowledge sources grouped by parent bot. Essential for multi-agent solutions. |
+
+### Validation & Comparison
+
+| Tool | Description |
+|---|---|
+| `validate_solution` | Check solution for common issues: missing system topics, wrong auth config, empty icon, missing connection references, entity root component entries. Returns errors, warnings, and info with rule names. |
+| `compare_solutions` | Diff two extracted solutions: files added/removed/changed, version differences, component-level additions and removals. Parameters: `solution_a`, `solution_b`. |
+
+### Dependency Graph
+
+| Tool | Description |
+|---|---|
+| `get_dependency_graph` | Relationship graph across the entire solution. Nodes: bots, connectors, entities, flows. Edge types: `delegates_to` (sub-agent invocations), `uses_connector`, `accesses_entity`, `triggers_bot`, `invokes_via_connector` (flows calling bots through Copilot Studio connector). |
+
 ### Full Context
 
 | Tool | Description |
 |---|---|
-| `load_solution_context` | Load everything in one call: metadata, flows with trigger/action details, agent system prompt (untruncated), all bot components, connectors, entities, roles, env vars, sitemap, knowledge sources, and folder structure. Call this first to deeply understand a solution. |
+| `load_solution_context` | Load everything in one call: metadata, multi-bot tree with all system prompts, sub-agent delegations, flows with trigger/action details, connectors, entities, roles, env vars, sitemap, knowledge sources, validation issues, dependency graph, and folder structure. Call this first to deeply understand a solution. |
 
 ---
 
@@ -397,7 +418,9 @@ The server parses the complete Power Platform solution anatomy:
 | Cloud Flows / Business Rules / BPFs | `customizations.xml` + `Workflows/*.json` | `list_components(flows)`, `get_component_detail(flow)` |
 | Copilot Studio topics | `botcomponents/*.topic.*/data` | `list_components(bot_topics)` |
 | Copilot Studio actions | `botcomponents/*.action.*/data` | `list_components(bot_actions)` |
+| Bot definitions | `bots/*/bot.xml` + `configuration.json` | `list_components(bots)`, `get_bot_tree` |
 | Agent system prompt | `botcomponents/*.gpt.*/data` | `get_component_detail(bot_component, system_prompt)` |
+| Sub-agent delegations | `botcomponents/*.InvokeConnectedAgentTaskAction.*` | `list_components(sub_agent_delegations)`, `get_bot_tree` |
 | Knowledge sources | `botcomponents/*.knowledge.*/data` | `list_components(knowledge_sources)` |
 | Knowledge files | `botcomponents/*.file.*/data` | `list_components(knowledge_sources)` |
 | External triggers | `botcomponents/*.ExternalTriggerComponent.*` | `list_components(external_triggers)` |
@@ -481,7 +504,7 @@ powerplatform-solution-mcp/
 │       ├── environmentvariabledefinitions/
 │       └── ...                 <-- 30+ possible component folders
 ├── src/
-│   └── index.ts               <-- THE server (single file, ~1100 lines)
+│   └── index.ts               <-- THE server (single file, ~1550 lines)
 ├── package.json
 ├── tsconfig.json
 └── .gitignore

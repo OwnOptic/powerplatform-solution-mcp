@@ -425,7 +425,7 @@ function parseEntities(solDir: string) {
       const attrType = xmlTag(a, "Type") || xmlAttr(a, "Type") || "";
       const required = xmlTag(a, "RequiredLevel") || "";
       const format = xmlTag(a, "Format") || "";
-      const maxLength = xmlTag(a, "MaxLength") || "";
+      const maxLength = xmlTag(a, "MaxLength") || xmlTag(a, "Length") || "";
       return { name: attrName, displayName: attrDisplay, type: attrType, required, format, maxLength };
     }).filter(a => a.name);
     // Parse relationships
@@ -892,13 +892,28 @@ function buildDependencyGraph(solDir: string) {
   for (const flow of flows) {
     const flowId = `flow:${flow.name}`;
     addNode(flowId, "flow", flow.name);
-    // Check if flow references any bot schema name
     const flowDef = getFlowDefinition(solDir, flow.jsonFile);
     if (flowDef) {
       const flowStr = JSON.stringify(flowDef);
+      // Direct bot schema name reference
       for (const bot of bots) {
         if (flowStr.includes(bot.schemaName)) {
           edges.push({ from: flowId, to: `bot:${bot.schemaName}`, type: "triggers_bot" });
+        }
+      }
+      // Copilot Studio connector reference (shared_powervirtualagents, shared_microsoftcopilotstudio)
+      if (flowStr.includes("shared_powervirtualagents") || flowStr.includes("shared_microsoftcopilotstudio") || flowStr.includes("shared_copilotstudio")) {
+        // Try to find which bot - check for bot display name or schema name in action parameters
+        let linked = false;
+        for (const bot of bots) {
+          if (flowStr.includes(bot.displayName) || flowStr.includes(bot.schemaName)) {
+            edges.push({ from: flowId, to: `bot:${bot.schemaName}`, type: "invokes_via_connector" });
+            linked = true;
+          }
+        }
+        // If connector used but can't determine which bot, link to first bot
+        if (!linked && bots.length === 1) {
+          edges.push({ from: flowId, to: `bot:${bots[0].schemaName}`, type: "invokes_via_connector" });
         }
       }
     }
@@ -1108,10 +1123,25 @@ function createMcpServer(): McpServer {
         return { content: [{ type: "text", text: JSON.stringify(schema, null, 2) }] };
       }
       if (component_type === "bot_component") {
-        if (name.toLowerCase() === "system_prompt") {
-          const gpt = parseBotComponents(solution).find((c) => c.type === "gpt");
-          if (!gpt) return { content: [{ type: "text", text: "No GPT/system prompt component found." }] };
-          return { content: [{ type: "text", text: getBotComponentData(solution, gpt.folder) || "No data." }] };
+        if (name.toLowerCase().startsWith("system_prompt")) {
+          const allGpts = parseBotComponents(solution).filter((c) => c.type === "gpt");
+          if (!allGpts.length) return { content: [{ type: "text", text: "No GPT/system prompt component found." }] };
+          // Support system_prompt:{botSchemaName} for multi-bot solutions
+          const botFilter = name.includes(":") ? name.split(":").slice(1).join(":").toLowerCase() : "";
+          if (botFilter) {
+            const match = allGpts.find((g) => g.parentBot.toLowerCase().includes(botFilter) || g.folder.toLowerCase().includes(botFilter));
+            if (!match) return { content: [{ type: "text", text: `No system prompt found for bot matching "${botFilter}". Available: ${allGpts.map((g) => g.parentBot).join(", ")}` }] };
+            return { content: [{ type: "text", text: getBotComponentData(solution, match.folder) || "No data." }] };
+          }
+          // Multi-bot: return all prompts labeled by bot
+          if (allGpts.length > 1) {
+            const sections = allGpts.map((g) => {
+              const data = getBotComponentData(solution, g.folder) || "No data.";
+              return `=== ${g.parentBot} ===\n${data}`;
+            });
+            return { content: [{ type: "text", text: sections.join("\n\n") }] };
+          }
+          return { content: [{ type: "text", text: getBotComponentData(solution, allGpts[0].folder) || "No data." }] };
         }
         const data = getBotComponentData(solution, name);
         if (!data) return { content: [{ type: "text", text: `Component "${name}" not found.` }] };
